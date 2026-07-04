@@ -1,0 +1,7 @@
+{
+  "base_url": "http://localhost:5001",
+  "environment": "remote",
+  "max_turns": 30,
+  "demo": false,
+  "chain_antigravity": true
+}

@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PORT="${PORT:-5000}"
+PORT="${PORT:-5001}"
 CONFIG="${1:-config_rh.json}"
 
 # ── 1. Environnement ─────────────────────────────────────────────────────────
@@ -88,6 +88,19 @@ if ls downloads/*.txt >/dev/null 2>&1; then
   ls -1 downloads/
 else
   echo "⚠ Aucun fichier telecharge/extrait dans downloads/"
+fi
+
+# ── 6. Phase 2 : agent Antigravity (calcul deterministe apres Computer Use) ──
+# Enchaine automatiquement si config_antigravity.json a "chain_antigravity": true.
+AG_CONFIG="config_antigravity.json"
+if [ -f "$AG_CONFIG" ] && grep -q '"chain_antigravity"[[:space:]]*:[[:space:]]*true' "$AG_CONFIG"; then
+  echo "--------------------------------------------------------------------------"
+  echo "→ Phase 2 — agent Antigravity (config : $AG_CONFIG)"
+  python3 agent_antigravity.py "$AG_CONFIG" || true
+  if ls audit_output/* >/dev/null 2>&1; then
+    echo "✓ Livrables d'audit produits dans audit_output/ :"
+    ls -1 audit_output/
+  fi
 fi
 
 exit $STATUS

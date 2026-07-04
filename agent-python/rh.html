@@ -157,6 +157,7 @@
 <script>
   let evtSource = null;
   let rendered = 0;
+  let chained = false;   // évite les redirections multiples vers la phase 2
 
   function log(msg, cls) {
     const feed = document.getElementById('logFeed');
@@ -234,6 +235,14 @@
     // Message final
     if ((status === 'done' || status === 'error') && s.current_log) {
       log(s.current_log, status === 'error' ? 'err' : 'nav');
+    }
+
+    // Enchaînement automatique : dès que Computer Use termine (succès), on
+    // bascule sur la phase Antigravity, qui démarre seule (?auto=1).
+    if (status === 'done' && !chained) {
+      chained = true;
+      log('→ Phase 1 terminée. Enchaînement vers la phase Antigravity...', 'nav');
+      setTimeout(() => { window.location.href = '/antigravity?auto=1'; }, 1500);
     }
 
     renderResults(s.results);
