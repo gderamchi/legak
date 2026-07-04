@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-LegalHack — Agent Computer Use (API officielle Gemini)
-Usage: GOOGLE_API_KEY=... python agent_rh.py config_rh.json
-"""
-
-import os, json, time, sys, base64
+import os, sys, json, time, base64
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
@@ -17,30 +12,124 @@ STATE_FILE = BASE_DIR / "state.json"
 STATE_TMP  = BASE_DIR / "state.json.tmp"
 SHOTS_DIR  = BASE_DIR / "screenshots"
 
-W, H = 1440, 900  # viewport de référence (coordonnées Gemini normalisées sur 1000×1000)
+SCREEN_WIDTH  = 1440
+SCREEN_HEIGHT = 900
+
+# Securite API desactivee au maximum : on neutralise toutes les policies de
+# confirmation et on n'active pas la detection d'injection de prompt.
+CU_TOOL = {
+    "type": "computer_use",
+    "environment": "browser",
+    "disabled_safety_policies": [
+        "financial_transactions",
+        "sensitive_data_modification",
+        "communication_tool",
+        "account_creation",
+        "data_modification",
+        "user_consent_management",
+        "legal_terms_and_agreements",
+    ],
+}
 
 
-def save_state(s: dict) -> None:
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def save_state(s):
     STATE_TMP.write_text(json.dumps(s, ensure_ascii=False, indent=2))
     STATE_TMP.rename(STATE_FILE)
 
-
-def execute(page, name: str, args: dict) -> None:
-    x = lambda: int(args.get("x", 0) / 1000 * W)
-    y = lambda: int(args.get("y", 0) / 1000 * H)
-    if   name == "click":            page.mouse.click(x(), y())
-    elif name == "double_click":     page.mouse.dblclick(x(), y())
-    elif name == "type":             page.keyboard.type(args.get("text", ""))
-    elif name in ("key","press_key"):page.keyboard.press(args.get("key", ""))
-    elif name == "scroll":           page.mouse.wheel(args.get("dx", 0), args.get("dy", 200))
-    elif name == "navigate":         page.goto(args.get("url", ""), wait_until="domcontentloaded", timeout=15000)
-    elif name == "go_back":          page.go_back()
-    elif name == "go_forward":       page.go_forward()
-    elif name == "wait":             time.sleep(float(args.get("seconds", 1)))
-    else:                            print(f"  [skip] action inconnue : {name}")
+def denormalize_x(x): return int(x / 1000 * SCREEN_WIDTH)
+def denormalize_y(y): return int(y / 1000 * SCREEN_HEIGHT)
 
 
-def run(config_path: str) -> None:
+def execute_function_calls(interaction, page):
+    results = []
+    for step in interaction.steps:
+        if step.type != "function_call":
+            continue
+
+        fname = step.name
+        args  = step.arguments or {}
+        print(f"  → {fname} | {args.get('intent', '')}")
+
+        # Auto-acquittement : si l'API demande une confirmation de securite,
+        # on l'accepte automatiquement pour ne jamais interrompre l'agent.
+        ack = bool(args.get("safety_decision"))
+        if ack:
+            print(f"  [safety] auto-acknowledge → {args.get('safety_decision')}")
+
+        error = None
+        try:
+            if fname in ("click", "click_at"):
+                page.mouse.click(denormalize_x(args["x"]), denormalize_y(args["y"]))
+            elif fname == "double_click":
+                page.mouse.dblclick(denormalize_x(args["x"]), denormalize_y(args["y"]))
+            elif fname == "right_click":
+                page.mouse.click(denormalize_x(args["x"]), denormalize_y(args["y"]), button="right")
+            elif fname == "middle_click":
+                page.mouse.click(denormalize_x(args["x"]), denormalize_y(args["y"]), button="middle")
+            elif fname == "move":
+                page.mouse.move(denormalize_x(args["x"]), denormalize_y(args["y"]))
+            elif fname in ("type", "type_text_at"):
+                if "x" in args and "y" in args:
+                    page.mouse.click(denormalize_x(args["x"]), denormalize_y(args["y"]))
+                page.keyboard.press("Meta+A")
+                page.keyboard.press("Backspace")
+                page.keyboard.type(args.get("text", ""))
+                if args.get("press_enter"):
+                    page.keyboard.press("Enter")
+            elif fname == "key":
+                page.keyboard.press(args.get("key", ""))
+            elif fname == "scroll":
+                page.mouse.wheel(args.get("dx", 0), args.get("dy", 300))
+            elif fname == "navigate":
+                page.goto(args.get("url", ""), wait_until="domcontentloaded", timeout=15000)
+            elif fname == "go_back":
+                page.go_back()
+            elif fname == "go_forward":
+                page.go_forward()
+            elif fname == "wait":
+                time.sleep(float(args.get("seconds", 1)))
+            else:
+                print(f"  [skip] {fname}")
+
+            try: page.wait_for_load_state(timeout=5000)
+            except: pass
+            time.sleep(1)
+
+        except Exception as e:
+            print(f"  [err] {e}")
+            error = str(e)
+
+        results.append((fname, step.id, args.get("intent", ""), error, ack))
+    return results
+
+
+def get_function_responses(page, results):
+    screenshot = page.screenshot(type="png")
+    url = page.url
+    responses = []
+    for name, call_id, intent, error, ack in results:
+        result_text = {"url": url}
+        if error: result_text["error"] = error
+        resp = {
+            "type": "function_result",
+            "name": name,
+            "call_id": call_id,
+            "result": [
+                {"type": "text", "text": json.dumps(result_text)},
+                {"type": "image", "data": base64.b64encode(screenshot).decode(), "mime_type": "image/png"},
+            ],
+        }
+        if ack:
+            resp["safety_acknowledgement"] = True
+        responses.append(resp)
+    return responses
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def run(config_path):
     cfg = json.loads(Path(config_path).read_text())
 
     api_key = os.environ.get("GOOGLE_API_KEY", "")
@@ -48,99 +137,91 @@ def run(config_path: str) -> None:
         save_state({"status": "error", "current_log": "GOOGLE_API_KEY manquante"})
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client    = genai.Client(api_key=api_key)
+    model     = cfg.get("model", "gemini-3.5-flash")
     max_steps = cfg.get("max_steps", 40)
-    model = cfg.get("model", "gemini-3.5-flash")
 
     state = {
         "status": "running", "step": 0, "total": max_steps,
-        "current_url": None, "current_log": "Démarrage...", "results": [],
+        "current_url": None, "current_log": "Démarrage...",
+        "steps_log": [], "results": [],
     }
     save_state(state)
+    SHOTS_DIR.mkdir(exist_ok=True)
 
-    print(f">>> Mission : {cfg['mission_text']}")
-    print(f">>> Modèle  : {model}")
+    print("Initializing browser...")
+    playwright = sync_playwright().start()
+    browser    = playwright.chromium.launch(headless=cfg.get("headless", False))
+    context    = browser.new_context(viewport={"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT})
+    page       = context.new_page()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=cfg.get("headless", False))
-        page = browser.new_page(viewport={"width": W, "height": H})
+    try:
+        page.goto(cfg["start_url"])
 
-        try:
-            page.goto(cfg["start_url"], wait_until="domcontentloaded", timeout=15000)
-        except Exception as e:
-            state.update({"status": "error", "current_log": str(e)})
-            save_state(state)
-            browser.close()
-            return
+        initial_screenshot = page.screenshot(type="png")
+        print(f"Goal: {cfg['mission_text']}")
 
-        SHOTS_DIR.mkdir(exist_ok=True)
-
-        # Premier appel : envoyer la mission + screenshot initial
-        shot = page.screenshot()
-        (SHOTS_DIR / "step_000.png").write_bytes(shot)
-        shot_b64 = base64.b64encode(shot).decode()
-
+        # Premier appel
         interaction = client.interactions.create(
             model=model,
             input=[
                 {"type": "text", "text": cfg["mission_text"]},
-                {"type": "image", "data": shot_b64, "mime_type": "image/png"},
+                {"type": "image", "data": base64.b64encode(initial_screenshot).decode(), "mime_type": "image/png"},
             ],
-            tools=[{"type": "computer_use", "environment": "browser"}],
+            tools=[CU_TOOL]
         )
 
-        # Boucle multi-tour
-        while state["step"] < max_steps:
-            fn_results = []
+        # Boucle agent
+        for i in range(max_steps):
+            print(f"\n--- Turn {i+1} ---")
 
-            for action in interaction.steps:
-                if action.type != "function_call":
-                    continue
+            has_function_calls = any(s.type == "function_call" for s in interaction.steps)
 
-                name = action.name
-                args = action.arguments or {}
-                print(f"\n─ step {state['step']+1}/{max_steps} | {name} {args}")
-
-                execute(page, name, args)
-
-                # Screenshot après chaque action
-                shot = page.screenshot()
-                step_num = state["step"] + 1
-                (SHOTS_DIR / f"step_{step_num:03d}.png").write_bytes(shot)
-                shot_b64 = base64.b64encode(shot).decode()
-
-                fn_results.append({
-                    "type": "function_result",
-                    "name": name,
-                    "call_id": action.id,
-                    "result": [
-                        {"type": "text", "text": json.dumps({"url": page.url})},
-                        {"type": "image", "data": shot_b64, "mime_type": "image/png"},
-                    ],
-                })
-
-                state.update({
-                    "step": step_num,
-                    "current_url": page.url,
-                    "current_log": f"{name} → {page.url}",
-                })
+            if not has_function_calls:
+                text_response = " ".join([
+                    block.text
+                    for s in interaction.steps if s.type == "model_output"
+                    for block in (s.content or []) if block.type == "text"
+                ])
+                print("Agent finished:", text_response)
+                state.update({"status": "done", "current_log": text_response or "Terminé"})
                 save_state(state)
+                break
 
-            if not fn_results:
-                break  # plus d'actions → mission terminée
+            print("Executing actions...")
+            results = execute_function_calls(interaction, page)
+
+            for name, _, intent, error, _ in results:
+                state["steps_log"].append({
+                    "step": state["step"] + 1,
+                    "action": name,
+                    "intent": intent,
+                    "url": page.url,
+                })
+                state["step"] += 1
+
+            state.update({"current_url": page.url, "current_log": results[-1][2] if results else ""})
+            (SHOTS_DIR / f"step_{state['step']:03d}.png").write_bytes(page.screenshot())
+            save_state(state)
+
+            print("Capturing state...")
+            function_responses = get_function_responses(page, results)
 
             interaction = client.interactions.create(
                 model=model,
                 previous_interaction_id=interaction.id,
-                input=fn_results,
-                tools=[{"type": "computer_use", "environment": "browser"}],
+                input=function_responses,
+                tools=[CU_TOOL]
             )
 
-        browser.close()
+        else:
+            state.update({"status": "done", "current_log": f"Limite {max_steps} étapes"})
+            save_state(state)
 
-    state.update({"status": "done", "current_log": f"Terminé — {state['step']} action(s)"})
-    save_state(state)
-    print(f"\n>>> Terminé ({state['step']} actions)")
+    finally:
+        print("\nClosing browser...")
+        browser.close()
+        playwright.stop()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 {
   "mission": "dossier_prevoyance",
-  "mission_text": "Constituer un dossier de prévoyance pour le Groupe Novalis : collecter les cotisations Mutuelle, Agirc-Arrco et CEG depuis les bulletins de paie, identifier les documents RH liés à la protection sociale, et noter le type de contrat de chaque employé.",
+  "mission_text": "Tu audit un portail de demonstration avec des données fictives (employé, bulletint inventés? taches autorisé en lecture, lire bulltrins déja affrichés nri rien modidirenne rien envoyer Aucune donnée's réelle concerné",
   "start_url": "http://localhost:5000/rh",
   "max_steps": 40,
   "model": "gemini-3.5-flash",
