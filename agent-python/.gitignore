@@ -1,0 +1,13 @@
+# Secrets — NE JAMAIS committer
+.env
+*.key
+
+# Fichiers d'exécution générés par l'agent / le serveur
+state.json
+config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LegalHack — Lecteur de documents</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:     #0d1117;
+      --panel:  #161b22;
+      --border: #30363d;
+      --text:   #e6edf3;
+      --muted:  #8b949e;
+      --accent: #388bfd;
+      --green:  #3fb950;
+      --red:    #f85149;
+      --yellow: #d29922;
+      --r:      8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+    .logo { font-size: 1.1rem; font-weight: 700; }
+    .chip {
+      background: rgba(56,139,253,0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56,139,253,0.35);
+      font-size: 0.68rem; font-weight: 700;
+      padding: 0.2rem 0.55rem; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .header-right { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
+
+    .workspace {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      overflow: hidden;
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      overflow-y: auto;
+    }
+    .field { display: flex; flex-direction: column; gap: 0.35rem; }
+    label {
+      font-size: 0.7rem; font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      color: var(--text);
+      padding: 0.6rem 0.75rem;
+      font-size: 0.82rem;
+      font-family: inherit;
+      resize: vertical; line-height: 1.5;
+      transition: border-color 0.15s;
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    .h-sm { min-height: 68px; }
+    .h-md { min-height: 110px; }
+    .hint { font-size: 0.71rem; color: var(--muted); }
+
+    .btn-row { display: flex; gap: 0.5rem; }
+    .btn {
+      border: none; border-radius: var(--r);
+      font-size: 0.85rem; font-weight: 600; cursor: pointer;
+      padding: 0.7rem 1rem;
+      display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+      transition: filter 0.15s, background 0.15s, color 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; flex: 1; }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-stop {
+      background: transparent; color: var(--red);
+      border: 1px solid var(--red); padding: 0.7rem 0.85rem;
+    }
+    .btn-stop:hover:not(:disabled) { background: var(--red); color: #fff; }
+    .btn-stop:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .info-box {
+      background: rgba(56,139,253,0.06);
+      border: 1px solid rgba(56,139,253,0.2);
+      border-radius: var(--r);
+      padding: 0.75rem;
+      font-size: 0.75rem; color: var(--muted); line-height: 1.65;
+    }
+
+    /* ── MAIN ── */
+    .main { display: flex; flex-direction: column; overflow: hidden; }
+
+    .status-bar {
+      padding: 0.65rem 1.25rem;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.75rem;
+      font-size: 0.82rem; flex-shrink: 0;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+    }
+    .dot.running { background: var(--yellow); animation: blink 1s infinite; }
+    .dot.done    { background: var(--green); }
+    .dot.error   { background: var(--red); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+    #currentUrl {
+      color: var(--accent); font-size: 0.77rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px;
+    }
+
+    .content {
+      flex: 1; overflow-y: auto; padding: 1.25rem;
+      display: flex; flex-direction: column; gap: 1.25rem;
+    }
+
+    .progress-row { display: flex; align-items: center; gap: 0.75rem; }
+    .progress-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
+    .progress-label { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+    .card-head {
+      padding: 0.55rem 1rem; border-bottom: 1px solid var(--border);
+      font-size: 0.7rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+
+    .log-feed {
+      height: 130px; overflow-y: auto;
+      padding: 0.6rem 1rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.74rem; line-height: 1.7; color: var(--muted);
+    }
+    .log-feed .entry.action { color: var(--yellow); }
+    .log-feed .entry.nav    { color: var(--accent); }
+
+    /* RESULTS */
+    .results-list { display: flex; flex-direction: column; gap: 0; }
+
+    .doc-item {
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .doc-item:last-child { border-bottom: none; }
+
+    .doc-header {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.85rem 1rem; cursor: pointer;
+      transition: background 0.1s;
+    }
+    .doc-header:hover { background: rgba(255,255,255,0.02); }
+
+    .badge {
+      flex-shrink: 0;
+      padding: 0.2rem 0.55rem; border-radius: 4px;
+      font-size: 0.7rem; font-weight: 700; white-space: nowrap;
+    }
+    .badge-ok   { background: rgba(63,185,80,0.12); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+    .badge-off  { background: rgba(139,148,158,0.1); color: var(--muted); border: 1px solid var(--border); }
+
+    .doc-url { font-size: 0.77rem; color: var(--muted); word-break: break-all; flex: 1; }
+    .doc-sujet { font-size: 0.8rem; color: var(--text); font-weight: 500; }
+    .doc-chars { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; }
+    .doc-arrow { color: var(--muted); flex-shrink: 0; font-size: 0.8rem; transition: transform 0.2s; }
+    .doc-item.open .doc-arrow { transform: rotate(90deg); }
+
+    .doc-body {
+      display: none;
+      padding: 0 1rem 1rem 1rem;
+    }
+    .doc-item.open .doc-body { display: block; }
+
+    .doc-content {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-size: 0.78rem;
+      line-height: 1.75;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 420px;
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    .copy-btn {
+      margin-top: 0.5rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 5px;
+      padding: 0.3rem 0.65rem;
+      font-size: 0.72rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .empty { text-align: center; padding: 2.5rem; color: var(--muted); }
+    .empty-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">LegalHack</span>
+  <span class="chip">Lecteur</span>
+  <span class="header-right">Extraction de documents par Gemini</span>
+</header>
+
+<div class="workspace">
+
+  <aside class="sidebar">
+    <div class="field">
+      <label>Sujet recherche</label>
+      <textarea id="sujet" class="h-sm"
+        placeholder="Ex: fiscalite des entreprises, TVA, impot sur le revenu..."></textarea>
+    </div>
+
+    <div class="field">
+      <label>URL de la page de documents</label>
+      <textarea id="urls" class="h-md"
+        placeholder="http://localhost:5000/documents&#10;https://exemple.fr/portail"></textarea>
+      <span class="hint">Une URL par ligne — page liste ou document direct</span>
+      <button onclick="useDemo()" style="
+        margin-top: 0.4rem;
+        background: transparent;
+        border: 1px dashed var(--border);
+        color: var(--muted);
+        border-radius: 5px;
+        padding: 0.35rem 0.65rem;
+        font-size: 0.72rem;
+        cursor: pointer;
+        font-family: inherit;
+        transition: border-color 0.15s, color 0.15s;
+        text-align: left;
+      " onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+         onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+        &#128196; Utiliser la page de demo (8 documents juridiques)
+      </button>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="startBtn" onclick="startAnalysis()">&#9654; Lancer</button>
+      <button class="btn btn-stop"    id="stopBtn"  onclick="stopAnalysis()" disabled>&#9632; Stop</button>
+    </div>
+
+    <div class="info-box">
+      L'agent ouvre chaque URL dans Chromium, lit le document en entier (scroll automatique),
+      et recupere son texte complet. Tu peux ensuite le parcourir ou le copier.
+    </div>
+  </aside>
+
+  <section class="main">
+    <div class="status-bar">
+      <div class="dot" id="dot"></div>
+      <span id="statusText">En attente</span>
+      <span id="currentUrl"></span>
+    </div>
+
+    <div class="content">
+
+      <div class="progress-row" id="progressRow" style="display:none">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+        <span class="progress-label" id="progressLabel">0 / 0</span>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Journal</div>
+        <div class="log-feed" id="logFeed">
+          <div class="entry">Configure le sujet, colle les URLs, puis clique Lancer.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          Documents lus
+          <span id="resultsCount" style="font-size:.75rem;color:var(--muted)"></span>
+        </div>
+        <div id="resultsArea">
+          <div class="empty">
+            <div class="empty-icon">&#128196;</div>
+            <div>Les documents apparaitront ici</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+</div>
+
+<script>
+  let evtSource = null;
+  let renderedCount = 0;
+
+  function log(msg, cls = '') {
+    const feed = document.getElementById('logFeed');
+    const div = document.createElement('div');
+    div.className = 'entry' + (cls ? ' ' + cls : '');
+    div.textContent = msg;
+    feed.appendChild(div);
+    feed.scrollTop = feed.scrollHeight;
+    if (feed.children.length > 100) feed.removeChild(feed.firstChild);
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function toggleDoc(el) {
+    el.closest('.doc-item').classList.toggle('open');
+  }
+
+  function copyText(btn) {
+    const pre = btn.previousElementSibling;
+    navigator.clipboard.writeText(pre.textContent).then(() => {
+      btn.textContent = 'Copie !';
+      setTimeout(() => { btn.textContent = 'Copier le texte'; }, 1500);
+    });
+  }
+
+  function renderResults(results) {
+    if (!results?.length) return;
+
+    const pertinents = results.filter(r => r.pertinent).length;
+    document.getElementById('resultsCount').textContent =
+      pertinents + '/' + results.length + ' pertinents';
+
+    // Ajoute seulement les nouveaux
+    if (results.length <= renderedCount) return;
+    const newItems = results.slice(renderedCount);
+
+    const area = document.getElementById('resultsArea');
+    if (renderedCount === 0) {
+      area.innerHTML = '<div class="results-list" id="resultsList"></div>';
+    }
+    const list = document.getElementById('resultsList');
+
+    newItems.forEach(r => {
+      const chars = r.contenu ? r.contenu.length : 0;
+      const badge = r.pertinent
+        ? '<span class="badge badge-ok">&#10003; Pertinent</span>'
+        : '<span class="badge badge-off">Hors sujet</span>';
+      const catHtml = r.categorie
+        ? `<span style="font-size:.7rem;background:#1e293b;color:var(--muted);padding:.1rem .4rem;border-radius:3px;">${esc(r.categorie)}</span>`
+        : '';
+
+      const div = document.createElement('div');
+      div.className = 'doc-item';
+      div.innerHTML = `
+        <div class="doc-header" onclick="toggleDoc(this)">
+          ${badge}
+          <div style="flex:1;min-width:0">
+            <div class="doc-sujet">${esc(r.titre || r.sujet_detecte || r.url)} ${catHtml}</div>
+            <div class="doc-url" style="margin-top:.2rem">${esc(r.sujet_detecte || '')}</div>
+          </div>
+          <span class="doc-chars">${chars.toLocaleString()} car.</span>
+          <span class="doc-arrow">&#9654;</span>
+        </div>
+        <div class="doc-body">
+          <pre class="doc-content">${esc(r.contenu || '(aucun contenu)')}</pre>
+          <button class="copy-btn" onclick="copyText(this)">Copier le texte</button>
+        </div>`;
+      list.appendChild(div);
+    });
+
+    renderedCount = results.length;
+  }
+
+  function applyState(state) {
+    const dot = document.getElementById('dot');
+    const statusText = document.getElementById('statusText');
+    const currentUrl = document.getElementById('currentUrl');
+    const progressRow = document.getElementById('progressRow');
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+
+    const status = state.status || 'waiting';
+    dot.className = 'dot ' + (['running','starting'].includes(status) ? 'running' : status);
+
+    if (status === 'starting') statusText.textContent = 'Demarrage...';
+    else if (status === 'running') statusText.textContent = 'Lecture en cours...';
+    else if (status === 'done') statusText.textContent = 'Lecture terminee';
+    else if (status === 'error') statusText.textContent = 'Erreur';
+    else statusText.textContent = 'En attente';
+
+    currentUrl.textContent = (status === 'running' && state.current_url) ? state.current_url : '';
+
+    if (state.total > 0) {
+      progressRow.style.display = 'flex';
+      const pct = Math.round((state.done / state.total) * 100);
+      progressFill.style.width = pct + '%';
+      progressLabel.textContent = state.done + ' / ' + state.total;
+    }
+
+    if (state.current_log) {
+      const msg = state.current_log;
+      const cls = msg.startsWith('Action') ? 'action'
+                : msg.startsWith('Ouverture') ? 'nav' : '';
+      log(msg, cls);
+    }
+
+    if (state.results?.length) renderResults(state.results);
+  }
+
+  async function startAnalysis() {
+    const sujet   = document.getElementById('sujet').value.trim();
+    const urlsRaw = document.getElementById('urls').value.trim();
+
+    if (!sujet)   { alert('Saisis un sujet'); return; }
+    if (!urlsRaw) { alert('Saisis au moins une URL'); return; }
+
+    const urls = urlsRaw.split('\n').map(u => u.trim()).filter(Boolean);
+
+    // Reset
+    renderedCount = 0;
+    document.getElementById('logFeed').innerHTML = '';
+    document.getElementById('resultsArea').innerHTML =
+      '<div class="empty"><div>Lecture en cours...</div></div>';
+    document.getElementById('resultsCount').textContent = '';
+    document.getElementById('progressRow').style.display = 'none';
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    log('Envoi au serveur...');
+
+    let res;
+    try {
+      res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sujet, urls })
+      });
+    } catch (e) {
+      log('Erreur reseau : ' + e.message);
+      resetBtns(); return;
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      log('Erreur : ' + (err.error || res.statusText));
+      resetBtns(); return;
+    }
+
+    log('Agent demarre — Chromium va s\'ouvrir...');
+
+    evtSource = new EventSource('/api/stream');
+    evtSource.onmessage = e => {
+      const state = JSON.parse(e.data);
+      applyState(state);
+      if (['done', 'error'].includes(state.status)) {
+        evtSource.close(); evtSource = null;
+        resetBtns();
+      }
+    };
+    evtSource.onerror = () => {
+      log('Connexion SSE perdue');
+      evtSource.close(); evtSource = null;
+      resetBtns();
+    };
+  }
+
+  async function stopAnalysis() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+    log('Arrete.');
+    resetBtns();
+  }
+
+  function useDemo() {
+    document.getElementById('urls').value = 'http://localhost:5000/documents';
+    if (!document.getElementById('sujet').value.trim()) {
+      document.getElementById('sujet').value = 'fiscalite';
+    }
+  }
+
+  function resetBtns() {
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  }
+</script>
+</body>
+</html>
