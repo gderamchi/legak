@@ -18,10 +18,13 @@ Branche dans server.py :  from portail_rh import rh ; app.register_blueprint(rh)
 """
 
 import hashlib
+from pathlib import Path
 
-from flask import Blueprint
+from flask import Blueprint, send_file
 
 rh = Blueprint("rh", __name__)
+
+ASSETS_DIR = Path(__file__).parent / "assets"
 
 ENTREPRISE = {
     "nom": "Groupe Novalis",
@@ -853,10 +856,19 @@ def prevoyance_contrat(cid):
         cats += f'<span class="badge {"b-green" if ok else "b-red"}" style="margin-right:.4rem">{cat} : {"couvert" if ok else "non couvert"}</span>'
     note = f"""<div class="note"><b>Point de conformite.</b> {c['note']}</div>""" if c.get("note") else ""
 
+    telecharger = ""
+    if c["id"] == "prevoyance":
+        telecharger = (
+            '<a class="btn" download href="/rh/prevoyance/contrat-ag2r.pdf" '
+            'style="width:auto;display:inline-block;text-decoration:none;margin:1rem 0 0">'
+            '&#8681; Telecharger le contrat (PDF)</a>'
+        )
+
     body = f"""
     <p class="sub" style="margin-bottom:1rem"><a class="link" href="/rh/prevoyance">← Prevoyance & protection sociale</a></p>
     <h1 class="page">{c['organisme']}</h1>
     <p class="sub">{c['type']} · reference {c['reference']}</p>
+    {telecharger}
     <div class="info-grid" style="margin-top:1.5rem">
       <div class="box"><div class="k">Organisme</div><div class="v">{c['organisme']}</div></div>
       <div class="box"><div class="k">Effet</div><div class="v">{c['effet']}</div></div>
@@ -871,6 +883,15 @@ def prevoyance_contrat(cid):
     </div>
     {note}"""
     return shell(f"Contrat {c['organisme']}", body, "prev")
+
+
+@rh.route("/rh/prevoyance/contrat-ag2r.pdf")
+def contrat_prevoyance_pdf():
+    return send_file(
+        ASSETS_DIR / "contrat-prevoyance-ag2r-pv-2022-1187.pdf",
+        as_attachment=True,
+        download_name="Contrat-prevoyance-AG2R-PV-2022-1187.pdf",
+    )
 
 
 # Pages secondaires (donnent de la matiere a crawler, liens internes)

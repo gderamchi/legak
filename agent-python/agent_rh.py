@@ -6,11 +6,13 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from playwright.sync_api import sync_playwright
 from google import genai
+from pypdf import PdfReader
 
-BASE_DIR   = Path(__file__).parent
-STATE_FILE = BASE_DIR / "state.json"
-STATE_TMP  = BASE_DIR / "state.json.tmp"
-SHOTS_DIR  = BASE_DIR / "screenshots"
+BASE_DIR      = Path(__file__).parent
+STATE_FILE    = BASE_DIR / "state.json"
+STATE_TMP     = BASE_DIR / "state.json.tmp"
+SHOTS_DIR     = BASE_DIR / "screenshots"
+DOWNLOADS_DIR = BASE_DIR / "downloads"
 
 SCREEN_WIDTH  = 1440
 SCREEN_HEIGHT = 900
@@ -40,6 +42,15 @@ def save_state(s):
 
 def denormalize_x(x): return int(x / 1000 * SCREEN_WIDTH)
 def denormalize_y(y): return int(y / 1000 * SCREEN_HEIGHT)
+
+
+def extract_pdf_to_txt(pdf_path: Path) -> Path:
+    """Extraction deterministe du texte d'un PDF vers un fichier .txt."""
+    reader = PdfReader(str(pdf_path))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    txt_path = pdf_path.with_suffix(".txt")
+    txt_path.write_text(text, encoding="utf-8")
+    return txt_path
 
 
 def execute_function_calls(interaction, page):
@@ -141,6 +152,10 @@ def run(config_path):
     model     = cfg.get("model", "gemini-3.5-flash")
     max_steps = cfg.get("max_steps", 40)
 
+    # Guardrails (cadre des donnees fictives) + mission detaillee
+    system_prompt = cfg.get("system_prompt", "")
+    mission       = cfg.get("mission_brief") or cfg.get("mission_text", "")
+
     state = {
         "status": "running", "step": 0, "total": max_steps,
         "current_url": None, "current_log": "Démarrage...",
@@ -152,24 +167,58 @@ def run(config_path):
     print("Initializing browser...")
     playwright = sync_playwright().start()
     browser    = playwright.chromium.launch(headless=cfg.get("headless", False))
-    context    = browser.new_context(viewport={"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT})
+    context    = browser.new_context(
+        viewport={"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+        accept_downloads=True,
+    )
     page       = context.new_page()
+
+    DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+    def _on_download(download):
+        dest = DOWNLOADS_DIR / download.suggested_filename
+        download.save_as(dest)
+        print(f"  [download] {dest}")
+        try:
+            txt_path = extract_pdf_to_txt(dest)
+        except Exception as e:
+            print(f"  [pdf->txt err] {e}")
+            state["current_log"] = f"PDF telecharge mais extraction impossible : {e}"
+            state["download"] = str(dest)
+            save_state(state)
+            return
+        state["download"] = str(dest)
+        state["txt"] = str(txt_path)
+        state["current_log"] = f"PDF telecharge et extrait -> {txt_path.name}"
+        state.setdefault("results", []).append({
+            "type": "download",
+            "pdf": str(dest),
+            "txt": str(txt_path),
+            "preview": txt_path.read_text(encoding="utf-8")[:600],
+        })
+        save_state(state)
+
+    page.on("download", _on_download)
 
     try:
         page.goto(cfg["start_url"])
 
         initial_screenshot = page.screenshot(type="png")
-        print(f"Goal: {cfg['mission_text']}")
+        print(f"Goal: {mission}")
 
-        # Premier appel
-        interaction = client.interactions.create(
-            model=model,
-            input=[
-                {"type": "text", "text": cfg["mission_text"]},
+        # Premier appel : on transmet a l'agent le system_prompt (guardrails +
+        # cadre des donnees fictives) et le mission_brief (mission detaillee).
+        create_kwargs = {
+            "model": model,
+            "input": [
+                {"type": "text", "text": mission},
                 {"type": "image", "data": base64.b64encode(initial_screenshot).decode(), "mime_type": "image/png"},
             ],
-            tools=[CU_TOOL]
-        )
+            "tools": [CU_TOOL],
+        }
+        if system_prompt:
+            create_kwargs["system_instruction"] = system_prompt
+        interaction = client.interactions.create(**create_kwargs)
 
         # Boucle agent
         for i in range(max_steps):
@@ -184,7 +233,12 @@ def run(config_path):
                     for block in (s.content or []) if block.type == "text"
                 ])
                 print("Agent finished:", text_response)
-                state.update({"status": "done", "current_log": text_response or "Terminé"})
+                if state.get("txt"):
+                    dl_note = f" — PDF extrait en {Path(state['txt']).name}"
+                else:
+                    dl_note = " — ATTENTION : aucun PDF telecharge/extrait"
+                state.update({"status": "done",
+                              "current_log": (text_response or "Terminé") + dl_note})
                 save_state(state)
                 break
 
@@ -215,7 +269,10 @@ def run(config_path):
             )
 
         else:
-            state.update({"status": "done", "current_log": f"Limite {max_steps} étapes"})
+            dl_note = f" — PDF extrait en {Path(state['txt']).name}" if state.get("txt") \
+                else " — ATTENTION : aucun PDF telecharge/extrait"
+            state.update({"status": "done",
+                          "current_log": f"Limite {max_steps} étapes" + dl_note})
             save_state(state)
 
     finally:
