@@ -17,8 +17,11 @@ load_dotenv(Path(__file__).parent / ".env")
 from flask import Flask, request, Response, send_file, jsonify
 from flask_cors import CORS
 
+from portail_rh import rh as rh_blueprint
+
 app = Flask(__name__)
 CORS(app)
+app.register_blueprint(rh_blueprint)
 
 BASE_DIR = Path(__file__).parent
 STATE_FILE = BASE_DIR / "state.json"
