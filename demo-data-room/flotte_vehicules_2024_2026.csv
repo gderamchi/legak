@@ -1,0 +1,14 @@
+vehicule_id;immatriculation;modele;energie;mode;cout_achat_ttc;cout_global_annuel_location_ttc;date_premiere_immatriculation;date_mise_a_disposition;salarie;fonction;carburant_pris_en_charge;siret
+V-001;GA-214-KX;Peugeot 308;thermique;achat;28000;;2021-06-15;2022-03-01;DUPONT Claire;Direction;non;84230612300017
+V-002;FD-830-PL;Renault Talisman;thermique;achat;35000;;2017-06-01;2023-05-01;MARTIN Paul;Direction;non;84230612300017
+V-003;GK-102-RS;Renault Clio;thermique;location;;9600;;2024-01-01;BERNARD Lucie;Consultante;non;84230612300017
+V-004;GN-467-TT;Peugeot 208;thermique;achat;24000;;2023-04-20;2024-06-01;PETIT Hugo;Consultant;non;84230612300017
+V-005;FT-556-MB;Citroën C4;thermique;location;;8400;;2022-11-01;MOREAU Emma;Commercial;oui;84230612300017
+V-006;GH-909-AZ;Volkswagen Passat;thermique;achat;26000;;2022-09-05;2024-02-01;FOURNIER Léo;Commercial;oui;84230612300017
+V-007;GW-118-JD;Peugeot 3008;thermique;achat;32000;;2024-12-05;2025-03-01;GIRARD Anna;Direction;non;84230612300017
+V-008;GX-330-LM;Renault Mégane;thermique;location;;10800;;2025-04-01;LAMBERT Tom;Consultant;non;84230612300017
+V-009;GY-742-QQ;BMW Série 1;thermique;location;;12000;;2025-06-01;ROUSSEAU Zoé;Commercial;oui;84230612300017
+V-010;HA-005-BC;Peugeot 2008;thermique;achat;21000;;;2025-09-01;VINCENT Max;Consultant;non;84230612300017
+V-011;GZ-661-EE;Tesla Model 3;electrique;achat;45000;;2025-04-10;2025-05-01;HENRY Jade;Direction;non;84230612300017
+V-012;FY-284-HN;Audi A3;thermique;achat;27000;;2021-10-01;2025-02-15;NOEL Sam;Consultant;non;84230612300017
+# Réattribution : V-012 précédemment affecté à DURAND Alex du 2021-11-15 au 2025-01-31
