@@ -793,12 +793,27 @@ createServer(async (req, res) => {
       if (req.method === 'GET' && parts[3] === 'intake-progress') {
         const job = intakeJobs.get(mission.id)
         return send(res, 200, job
-          ? { running: job.running, total: job.total, events: job.events, error: job.error, completed: !job.running && !job.error }
-          : { running: false, total: 0, events: [], error: null, completed: Boolean(mission.intake) })
+          ? {
+              running: job.running,
+              total: job.total,
+              events: job.events,
+              error: job.error,
+              completed: !job.running && !job.error,
+              proofTrail: mission.proofTrail?.slice(-40) ?? [],
+            }
+          : {
+              running: false,
+              total: 0,
+              events: [],
+              error: null,
+              completed: Boolean(mission.intake),
+              proofTrail: mission.proofTrail ?? [],
+            })
       }
 
       if (req.method === 'POST' && parts[3] === 'analyze') {
         if (busyGuard(mission, res)) return
+        if (!mission.documents.length) return send(res, 400, { error: 'Aucune pièce reçue.' })
         if (analysisProgressJobs.get(mission.id)?.running) {
           return send(res, 409, { error: 'Analyse déjà en cours.' })
         }

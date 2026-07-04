@@ -1058,13 +1058,40 @@ function ProductApp() {
   function runAnalysis() {
     if (!mission) return
     void run('L’agent exécute les contrôles datés règle par règle, puis fait contredire les conclusions…', async () => {
-      const next = await api<Mission>(`/api/missions/${mission.id}/analyze`, { method: 'POST', body: '{}' })
-      setMission(next)
-      setSelectedFindingId(next.findings[0]?.id ?? null)
-      setActiveTab('rapport')
-      setNotice({
-        text: `Audit terminé — ${next.findings.length} constat${next.findings.length > 1 ? 's' : ''}, exposition ferme ${next.totals ? eurRange(next.totals.exposure) : '—'}.`,
-      })
+      try {
+        await api(`/api/missions/${mission.id}/analyze`, { method: 'POST', body: '{}' })
+        setAnalysisLive({ running: true, phase: 'extraction', events: [] })
+        let completed = false
+        for (let attempt = 0; attempt < 600; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 400))
+          if (!aliveRef.current) return
+          const progress = await api<AnalysisProgress>(`/api/missions/${mission.id}/analysis-progress`)
+          if (!aliveRef.current) return
+          setAnalysisLive({
+            running: progress.running,
+            phase: progress.phase,
+            events: progress.events,
+          })
+          if (progress.error) throw new Error(progress.error)
+          if (!progress.running && progress.completed) {
+            completed = true
+            break
+          }
+        }
+        if (!completed) throw new Error('L’audit ne s’est pas terminé dans le temps imparti : rechargez la page et relancez.')
+        const next = await api<Mission>(`/api/missions/${mission.id}`)
+        if (!aliveRef.current) return
+        setMission(next)
+        setAnalysisLive(null)
+        setSelectedFindingId(next.findings[0]?.id ?? null)
+        setActiveTab('rapport')
+        setNotice({
+          text: `Audit terminé — ${next.findings.length} constat${next.findings.length > 1 ? 's' : ''}, exposition ferme ${next.totals ? eurRange(next.totals.exposure) : '—'}.`,
+        })
+      } catch (caught) {
+        if (aliveRef.current) setAnalysisLive(null)
+        throw caught
+      }
     })
   }
 
@@ -1115,6 +1142,23 @@ function ProductApp() {
     : null
 
   const intakeRunning = Boolean(intakeLive?.running)
+  const analysisRunning = Boolean(analysisLive?.running)
+
+  const liveProofTrail = analysisLive?.events.length
+    ? analysisLive.events
+    : intakeLive?.proofTrail?.length
+      ? intakeLive.proofTrail
+      : mission?.proofTrail ?? []
+
+  const findingProofTrail = useMemo(() => {
+    if (!selectedFinding || !mission?.proofTrail?.length) return []
+    return mission.proofTrail.filter(
+      (event) =>
+        event.refs.includes(selectedFinding.id) ||
+        event.refs.includes(selectedFinding.controlId) ||
+        event.meta?.findingId === selectedFinding.id,
+    )
+  }, [mission?.proofTrail, selectedFinding])
 
   return (
     <div className="app">
@@ -1175,6 +1219,14 @@ function ProductApp() {
           </div>
         )}
 
+        {mission && (
+          <ProofTrailPanel
+            events={liveProofTrail}
+            running={intakeRunning || analysisRunning || Boolean(vdrLive?.status.running)}
+            activePhase={analysisLive?.phase ?? (intakeRunning ? 'intake' : vdrLive?.status.running ? 'vdr' : null)}
+          />
+        )}
+
         <p className="rail-foot">
           Thématique couverte : avantages en nature véhicules (URSSAF).
           Rapport à relire et signer par l’avocat.
@@ -1208,7 +1260,7 @@ function ProductApp() {
           </dl>
         </div>
 
-        {busy && !intakeRunning && (
+        {busy && !intakeRunning && !analysisRunning && (
           <div className="busy" role="status">
             <span className="busy-spinner" aria-hidden="true" />
             {busyLabel}
@@ -1682,21 +1734,38 @@ function ProductApp() {
                 <div className="audit-progress-head">
                   <span className="busy-spinner" aria-hidden="true" />
                   <strong>L’agent audite le dossier</strong>
-                  <small>≈ 90 secondes</small>
+                  <small>{analysisLive?.events.length ? `${analysisLive.events.length} décision(s) tracée(s)` : '≈ 90 secondes'}</small>
                 </div>
                 <ol>
-                  {auditPhases.map((phase) => (
-                    <li key={phase.title}>
-                      <span>
-                        {phase.title}
-                        <small>{phase.detail}</small>
-                      </span>
-                    </li>
-                  ))}
+                  {auditPhases.map((phase) => {
+                    const phaseEvents = analysisLive?.events.filter((e) => e.phase === phase.id) ?? []
+                    const state =
+                      analysisLive?.phase === phase.id
+                        ? 'active'
+                        : phaseEvents.length
+                          ? 'done'
+                          : 'pending'
+                    const lastEvent = phaseEvents[phaseEvents.length - 1]
+                    return (
+                      <li key={phase.id} data-state={state}>
+                        <span>
+                          {phase.title}
+                          <small>{lastEvent ? lastEvent.action : phase.detail}</small>
+                        </span>
+                      </li>
+                    )
+                  })}
                 </ol>
+                {!!analysisLive?.events.length && (
+                  <ol className="proof-feed proof-feed--inline" aria-label="Décisions tracées en direct">
+                    {[...analysisLive.events].reverse().slice(0, 6).map((event) => (
+                      <ProofFeedItem key={event.seq} event={event} />
+                    ))}
+                  </ol>
+                )}
                 <p className="audit-progress-foot">
-                  Les montants sont calculés par le moteur déterministe — jamais par le modèle.
-                  Le rapport s’ouvrira automatiquement à la fin de l’audit.
+                  Chaque décision est horodatée avec son acteur (Gemini ou moteur déterministe) et sa justification.
+                  Les montants ne sont jamais calculés par le modèle.
                 </p>
               </div>
             ) : !mission.controls.length ? (
@@ -2020,6 +2089,16 @@ function ProductApp() {
                               </p>
                             </div>
                           )}
+                          {!!findingProofTrail.length && (
+                            <div className="proof-chain">
+                              <span className="proof-chain-caption">Chaîne de preuve du constat</span>
+                              <ol className="proof-feed">
+                                {findingProofTrail.map((event) => (
+                                  <ProofFeedItem key={event.seq} event={event} compact />
+                                ))}
+                              </ol>
+                            </div>
+                          )}
                           <div className="sources">
                             <span className="sources-caption">Pièces sources — cliquer pour ouvrir</span>
                             {selectedFinding.sources.map((source) => (
@@ -2199,6 +2278,58 @@ function ProductApp() {
           </Sheet>
         )}
       </main>
+    </div>
+  )
+}
+
+function ProofFeedItem({ event, compact = false }: { event: ProofEvent; compact?: boolean }) {
+  return (
+    <li className={compact ? 'proof-item is-compact' : 'proof-item'} data-status={event.status}>
+      <time dateTime={event.at}>{hhmmss(event.at)}</time>
+      <span className={`proof-actor proof-actor--${event.actor}`}>{proofActorLabels[event.actor] ?? event.actor}</span>
+      <strong>{event.action}</strong>
+      {!compact && <small>{fr(event.rationale)}</small>}
+      {!!event.refs.length && !compact && (
+        <span className="proof-refs">
+          {event.refs.slice(0, 4).map((ref) => (
+            <code key={ref}>{ref}</code>
+          ))}
+        </span>
+      )}
+    </li>
+  )
+}
+
+function ProofTrailPanel({
+  events,
+  running,
+  activePhase,
+}: {
+  events: ProofEvent[]
+  running: boolean
+  activePhase: string | null
+}) {
+  const tail = events.slice(-14)
+  return (
+    <div className="proof-trail-panel" aria-live="polite">
+      <div className="proof-trail-head">
+        <span className="proof-trail-caption">Trail de preuve</span>
+        {running && (
+          <span className="live-pulse">
+            {activePhase ? proofPhaseLabels[activePhase] ?? activePhase : 'en cours…'}
+          </span>
+        )}
+        <span className="count">{events.length}</span>
+      </div>
+      {tail.length ? (
+        <ol className="proof-feed proof-feed--rail">
+          {[...tail].reverse().map((event) => (
+            <ProofFeedItem key={event.seq} event={event} compact />
+          ))}
+        </ol>
+      ) : (
+        <p className="proof-trail-empty">Chaque décision de l’agent sera tracée ici avec son acteur et sa justification.</p>
+      )}
     </div>
   )
 }
