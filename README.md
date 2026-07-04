@@ -56,6 +56,12 @@ GEMINI_MODEL=gemini-2.5-flash
 PORT=8787
 ```
 
+## Audit rule base
+
+The business logic that runs after Computer Use (audit pipeline, deliverable
+contracts, risk scoring, per-vertical checklists, red flag rules, dated
+parameters, data model) lives in [docs/audit/](docs/audit/README.md).
+
 ## Business plan
 
 See [docs/business-plan.md](docs/business-plan.md) and
