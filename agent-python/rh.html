@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LegalHack — Audit RH</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e;
+      --accent: #388bfd; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+      --r: 8px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0;
+    }
+    .logo { font-size: 1.1rem; font-weight: 700; }
+    .chip {
+      background: rgba(56,139,253,0.15); color: var(--accent);
+      border: 1px solid rgba(56,139,253,0.35);
+      font-size: 0.68rem; font-weight: 700; padding: 0.2rem 0.55rem;
+      border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .header-right { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
+
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .status-bar {
+      padding: 0.65rem 1.5rem; background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.75rem; font-size: 0.82rem; flex-shrink: 0;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .dot.running { background: var(--yellow); animation: blink 1s infinite; }
+    .dot.done    { background: var(--green); }
+    .dot.error   { background: var(--red); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+    #statusUrl {
+      color: var(--accent); font-size: 0.77rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px;
+    }
+    .bar-right { margin-left: auto; display: flex; gap: 0.5rem; }
+
+    .btn {
+      border: none; border-radius: var(--r);
+      font-size: 0.82rem; font-weight: 600; cursor: pointer;
+      padding: 0.45rem 1rem; transition: filter 0.15s, background 0.15s, color 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.15); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-stop { background: transparent; color: var(--red); border: 1px solid var(--red); }
+    .btn-stop:hover:not(:disabled) { background: var(--red); color: #fff; }
+    .btn-stop:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .content { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+
+    .progress-row { display: flex; align-items: center; gap: 0.75rem; }
+    .progress-track { flex: 1; height: 4px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; width: 0%; }
+    .progress-label { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+    .card-head {
+      padding: 0.5rem 1rem; border-bottom: 1px solid var(--border);
+      font-size: 0.7rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+
+    .log-feed {
+      height: 140px; overflow-y: auto; padding: 0.6rem 1rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.74rem; line-height: 1.7; color: var(--muted);
+    }
+    .log-feed .nav { color: var(--accent); }
+    .log-feed .act { color: var(--yellow); }
+
+    .results-list { display: flex; flex-direction: column; }
+    .result-item {
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1rem;
+      display: flex; align-items: flex-start; gap: 0.75rem;
+    }
+    .result-item:last-child { border-bottom: none; }
+    .badge {
+      flex-shrink: 0; padding: 0.15rem 0.5rem; border-radius: 4px;
+      font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+    }
+    .badge-cot  { background: rgba(56,139,253,0.12); color: var(--accent); border: 1px solid rgba(56,139,253,0.3); }
+    .badge-doc  { background: rgba(63,185,80,0.12); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+    .badge-emp  { background: rgba(210,153,34,0.12); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+    .badge-def  { background: rgba(139,148,158,0.1); color: var(--muted); border: 1px solid var(--border); }
+    .result-label { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+    .result-val   { font-size: 0.78rem; color: var(--muted); margin-top: 0.1rem; }
+    .result-url   { font-size: 0.7rem; color: var(--muted); margin-top: 0.2rem; opacity: 0.6; }
+
+    .empty { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">LegalHack</span>
+  <span class="chip">Audit RH</span>
+  <span class="header-right">NOVA RH — Groupe Novalis</span>
+</header>
+
+<div class="main">
+  <div class="status-bar">
+    <div class="dot" id="dot"></div>
+    <span id="statusText">En attente</span>
+    <span id="statusUrl"></span>
+    <div class="bar-right">
+      <button class="btn btn-primary" id="startBtn" onclick="start()">&#9654; Lancer l'audit</button>
+      <button class="btn btn-stop"    id="stopBtn"  onclick="stop()" disabled>&#9632; Stop</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <div class="progress-row" id="progressRow" style="display:none">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <span class="progress-label" id="progressLabel">0 / 0</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head">Journal</div>
+      <div class="log-feed" id="logFeed">
+        <div>Clique sur "Lancer l'audit" pour démarrer.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        Résultats collectés
+        <span id="resultsCount"></span>
+      </div>
+      <div id="resultsArea">
+        <div class="empty">Les éléments collectés apparaîtront ici.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  let evtSource = null;
+  let rendered = 0;
+
+  function log(msg, cls) {
+    const feed = document.getElementById('logFeed');
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = msg;
+    feed.appendChild(d);
+    feed.scrollTop = feed.scrollHeight;
+    if (feed.children.length > 200) feed.removeChild(feed.firstChild);
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function badgeClass(type) {
+    if (type === 'cotisation') return 'badge-cot';
+    if (type === 'document')   return 'badge-doc';
+    if (type === 'info_employe') return 'badge-emp';
+    return 'badge-def';
+  }
+
+  function renderResults(results) {
+    if (!results?.length) return;
+    document.getElementById('resultsCount').textContent = results.length + ' élément(s)';
+    if (results.length <= rendered) return;
+
+    const area = document.getElementById('resultsArea');
+    if (rendered === 0) area.innerHTML = '<div class="results-list" id="list"></div>';
+    const list = document.getElementById('list');
+
+    results.slice(rendered).forEach(r => {
+      const div = document.createElement('div');
+      div.className = 'result-item';
+      div.innerHTML = `
+        <span class="badge ${badgeClass(r.type)}">${esc(r.type || '?')}</span>
+        <div>
+          <div class="result-label">${esc(r.label)}</div>
+          <div class="result-val">${esc(r.valeur)}</div>
+          <div class="result-url">${esc(r.url)}</div>
+        </div>`;
+      list.appendChild(div);
+    });
+    rendered = results.length;
+  }
+
+  function applyState(s) {
+    const status = s.status || 'waiting';
+    document.getElementById('dot').className = 'dot ' + (['running','starting'].includes(status) ? 'running' : status);
+    document.getElementById('statusText').textContent =
+      status === 'starting' ? 'Démarrage...' :
+      status === 'running'  ? `Étape ${s.step || 0} / ${s.total || '?'}` :
+      status === 'done'     ? 'Terminé' :
+      status === 'error'    ? 'Erreur' : 'En attente';
+    document.getElementById('statusUrl').textContent = s.current_url || '';
+
+    if (s.total > 0) {
+      document.getElementById('progressRow').style.display = 'flex';
+      document.getElementById('progressFill').style.width = Math.round((s.step / s.total) * 100) + '%';
+      document.getElementById('progressLabel').textContent = s.step + ' / ' + s.total;
+    }
+
+    if (s.current_log) {
+      const cls = s.current_log.includes('navigate') ? 'nav' : 'act';
+      log(s.current_log, cls);
+    }
+
+    renderResults(s.results);
+  }
+
+  async function start() {
+    rendered = 0;
+    document.getElementById('logFeed').innerHTML = '';
+    document.getElementById('resultsArea').innerHTML = '<div class="empty">Chargement...</div>';
+    document.getElementById('resultsCount').textContent = '';
+    document.getElementById('progressRow').style.display = 'none';
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    if (evtSource) { evtSource.close(); evtSource = null; }
+
+    const res = await fetch('/api/analyze-rh', { method: 'POST' }).catch(e => { log('Erreur: ' + e.message); resetBtns(); });
+    if (!res?.ok) { log('Erreur serveur'); resetBtns(); return; }
+
+    log('Agent démarré — Chromium va s\'ouvrir...', 'nav');
+
+    evtSource = new EventSource('/api/stream');
+    evtSource.onmessage = e => {
+      const s = JSON.parse(e.data);
+      applyState(s);
+      if (['done','error'].includes(s.status)) { evtSource.close(); evtSource = null; resetBtns(); }
+    };
+    evtSource.onerror = () => { evtSource.close(); evtSource = null; resetBtns(); };
+  }
+
+  async function stop() {
+    if (evtSource) { evtSource.close(); evtSource = null; }
+    await fetch('/api/stop-rh', { method: 'POST' }).catch(() => {});
+    log('Arrêté.'); resetBtns();
+  }
+
+  function resetBtns() {
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  }
+</script>
+</body>
+</html>

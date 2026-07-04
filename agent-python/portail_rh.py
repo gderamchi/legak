@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """
 PORTAIL RH FICTIF — "NOVA RH", portail interne du Groupe Novalis.
-Multi-pages HTML (login -> dashboard -> employes -> fiche -> bulletin), PAS d'API.
+Multi-pages HTML (login -> dashboard -> employes -> fiche -> bulletin
+-> prevoyance -> conges -> documents), PAS d'API.
 Cible de navigation pour l'agent computer-use / crawler.
 
-Contient 3 ANOMALIES DE CONFORMITE volontaires, pour l'audit :
+Contient 4 ANOMALIES DE CONFORMITE volontaires, pour l'audit :
   1. Amina Belkacem  — salaire brut SOUS le SMIC
   2. Thomas Lefevre  — heures supplementaires effectuees mais NON payees
   3. Karim Ndiaye    — cotisation "Mutuelle" prelevee DEUX fois
+  4. CADRES          — non couverts par la prevoyance obligatoire 1,50 % TA
+                       (ANI du 14/03/1947, art. 7) : le contrat prevoyance ne
+                       couvre que les ETAM ; aucune ligne prevoyance sur les
+                       bulletins des cadres (Marchand, Laurent).
 
 Branche dans server.py :  from portail_rh import rh ; app.register_blueprint(rh)
 """
 
-from flask import Blueprint, request, redirect
+import hashlib
+
+from flask import Blueprint
 
 rh = Blueprint("rh", __name__)
 
@@ -28,42 +35,58 @@ SMIC_HORAIRE = 11.88
 SMIC_MENSUEL = round(SMIC_HORAIRE * 151.67, 2)  # ~1801,80 €
 
 # ── EMPLOYES ────────────────────────────────────────────────────────────────
+# categorie : "Cadre" ou "ETAM" (classification Syntec). Sert au controle
+# prevoyance : les cadres doivent etre couverts (1,50 % TA), ce qui n'est pas
+# le cas ici -> anomalie.
 EMPLOYES = [
+    {
+        "id": "laurent", "prenom": "Etienne", "nom": "Laurent",
+        "poste": "Directeur des operations", "service": "Direction",
+        "contrat": "CDI — cadre au forfait", "entree": "03/05/2018",
+        "statut": "Actif", "matricule": "NV-0031", "categorie": "Cadre",
+        "email": "etienne.laurent@novalis.fr",
+    },
     {
         "id": "belkacem", "prenom": "Amina", "nom": "Belkacem",
         "poste": "Assistante administrative", "service": "Administration",
         "contrat": "CDI — temps plein", "entree": "12/03/2021",
-        "statut": "Actif", "matricule": "NV-0142",
+        "statut": "Actif", "matricule": "NV-0142", "categorie": "ETAM",
+        "email": "amina.belkacem@novalis.fr",
     },
     {
         "id": "lefevre", "prenom": "Thomas", "nom": "Lefevre",
         "poste": "Developpeur back-end", "service": "Technique",
         "contrat": "CDI — temps plein", "entree": "02/09/2022",
-        "statut": "Actif", "matricule": "NV-0210",
+        "statut": "Actif", "matricule": "NV-0210", "categorie": "ETAM",
+        "email": "thomas.lefevre@novalis.fr",
     },
     {
         "id": "marchand", "prenom": "Sophie", "nom": "Marchand",
         "poste": "Responsable commerciale", "service": "Ventes",
         "contrat": "CDI — cadre au forfait", "entree": "18/01/2019",
-        "statut": "Actif", "matricule": "NV-0087",
+        "statut": "Actif", "matricule": "NV-0087", "categorie": "Cadre",
+        "email": "sophie.marchand@novalis.fr",
     },
     {
         "id": "ndiaye", "prenom": "Karim", "nom": "Ndiaye",
         "poste": "Technicien support", "service": "Technique",
         "contrat": "CDI — temps plein", "entree": "05/06/2023",
-        "statut": "Actif", "matricule": "NV-0233",
+        "statut": "Actif", "matricule": "NV-0233", "categorie": "ETAM",
+        "email": "karim.ndiaye@novalis.fr",
     },
     {
         "id": "rousseau", "prenom": "Julie", "nom": "Rousseau",
         "poste": "Chargee de recrutement", "service": "Ressources humaines",
         "contrat": "CDI — temps plein", "entree": "22/11/2020",
-        "statut": "Actif", "matricule": "NV-0119",
+        "statut": "Actif", "matricule": "NV-0119", "categorie": "ETAM",
+        "email": "julie.rousseau@novalis.fr",
     },
     {
         "id": "bianchi", "prenom": "Marco", "nom": "Bianchi",
         "poste": "Assistant marketing", "service": "Marketing",
         "contrat": "CDD — temps partiel 24h", "entree": "01/02/2025",
-        "statut": "Actif", "matricule": "NV-0251",
+        "statut": "Actif", "matricule": "NV-0251", "categorie": "ETAM",
+        "email": "marco.bianchi@novalis.fr",
     },
 ]
 EMP_BY_ID = {e["id"]: e for e in EMPLOYES}
@@ -73,6 +96,20 @@ EMP_BY_ID = {e["id"]: e for e in EMPLOYES}
 # hs_montant = montant paye pour ces heures ; primes = liste (libelle, montant)
 # anomalie : cle interne pour la mise en evidence (le texte reste realiste)
 BULLETINS = [
+    # Etienne Laurent — CADRE, CONFORME sur la paie (mais prevoyance absente)
+    {"id": "b-laurent-2025-01", "emp": "laurent", "mois": "Janvier 2025",
+     "periode": "01/01/2025 au 31/01/2025", "paiement": "31/01/2025",
+     "heures": 151.67, "base": 5200.00, "hs_h": 0, "hs_montant": 0.0,
+     "primes": [("Prime d'anciennete", 260.00)], "anomalie": None},
+    {"id": "b-laurent-2025-02", "emp": "laurent", "mois": "Fevrier 2025",
+     "periode": "01/02/2025 au 28/02/2025", "paiement": "28/02/2025",
+     "heures": 151.67, "base": 5200.00, "hs_h": 0, "hs_montant": 0.0,
+     "primes": [("Prime d'anciennete", 260.00)], "anomalie": None},
+    {"id": "b-laurent-2025-03", "emp": "laurent", "mois": "Mars 2025",
+     "periode": "01/03/2025 au 31/03/2025", "paiement": "31/03/2025",
+     "heures": 151.67, "base": 5200.00, "hs_h": 0, "hs_montant": 0.0,
+     "primes": [("Prime d'anciennete", 260.00)], "anomalie": None},
+
     # Amina Belkacem — SOUS LE SMIC (base < SMIC mensuel)
     {"id": "b-belkacem-2025-01", "emp": "belkacem", "mois": "Janvier 2025",
      "periode": "01/01/2025 au 31/01/2025", "paiement": "31/01/2025",
@@ -101,7 +138,7 @@ BULLETINS = [
      "heures": 159.67, "base": 3200.00, "hs_h": 8, "hs_montant": 0.0,
      "primes": [], "anomalie": "hs_impayees"},
 
-    # Sophie Marchand — CONFORME (cas de controle)
+    # Sophie Marchand — CADRE, CONFORME sur la paie (mais prevoyance absente)
     {"id": "b-marchand-2025-01", "emp": "marchand", "mois": "Janvier 2025",
      "periode": "01/01/2025 au 31/01/2025", "paiement": "31/01/2025",
      "heures": 151.67, "base": 4100.00, "hs_h": 0, "hs_montant": 0.0,
@@ -166,6 +203,75 @@ def hh(x):
     return f"{x:.2f}".replace(".", ",")
 
 
+# ── PREVOYANCE & PROTECTION SOCIALE ─────────────────────────────────────────
+# Deux contrats collectifs. Le contrat PREVOYANCE ne couvre que les "ETAM" :
+# les CADRES sont donc HORS COUVERTURE alors que la loi impose une cotisation
+# patronale prevoyance >= 1,50 % de la Tranche A (ANI 14/03/1947, art. 7).
+CONTRATS_SOCIAUX = [
+    {
+        "id": "mutuelle",
+        "type": "Mutuelle sante (frais de sante)",
+        "organisme": "Malakoff Humanis",
+        "reference": "CT-SANTE-2023-0442",
+        "effet": "01/01/2023",
+        "categories": ["Cadre", "ETAM"],          # tout l'effectif
+        "assiette": "Forfait mensuel",
+        "taux": "34,50 € / mois (part salariale)",
+        "obligatoire": True,
+        "garanties": [
+            ("Hospitalisation", "100 % base de remboursement"),
+            ("Soins courants", "150 % BR"),
+            ("Optique", "forfait 200 € / 2 ans"),
+            ("Dentaire", "200 % BR"),
+        ],
+        "note": None,
+    },
+    {
+        "id": "prevoyance",
+        "type": "Prevoyance (deces / incapacite / invalidite)",
+        "organisme": "AG2R Prevoyance",
+        "reference": "PV-2022-1187",
+        "effet": "01/06/2022",
+        "categories": ["ETAM"],                    # !!! CADRES ABSENTS
+        "assiette": "Tranche A / Tranche B",
+        "taux": "0,86 % TA (part salariale)",
+        "obligatoire": True,
+        "garanties": [
+            ("Capital deces", "300 % du salaire annuel brut"),
+            ("Rente education", "oui, par enfant a charge"),
+            ("Incapacite temporaire de travail", "80 % du salaire net"),
+            ("Invalidite", "rente selon categorie 1 / 2 / 3"),
+        ],
+        "note": ("Point de conformite : l'ANI du 14/03/1947 (art. 7) impose une "
+                 "cotisation patronale prevoyance d'au moins 1,50 % de la Tranche A "
+                 "pour les salaries CADRES. Ce contrat ne mentionne que la categorie "
+                 "ETAM ; aucune couverture prevoyance n'est en place pour les cadres."),
+    },
+]
+CONTRAT_BY_ID = {c["id"]: c for c in CONTRATS_SOCIAUX}
+
+
+def categories_effectif():
+    """Liste ordonnee des categories presentes dans l'effectif."""
+    cats = []
+    for e in EMPLOYES:
+        if e["categorie"] not in cats:
+            cats.append(e["categorie"])
+    return cats
+
+
+def effectif_cat(cat):
+    return sum(1 for e in EMPLOYES if e["categorie"] == cat)
+
+
+def couvert(contrat, cat):
+    return cat in contrat["categories"]
+
+
+# Taux prevoyance ETAM applique sur le bulletin (part salariale)
+PREVOYANCE_TAUX_ETAM = 0.0086
+
+
 # ── CALCUL DU BULLETIN ──────────────────────────────────────────────────────
 COTISATIONS = [
     ("Securite sociale - Assurance maladie", 0.0000),
@@ -181,6 +287,7 @@ MUTUELLE = 34.50
 
 def calc(b):
     """Calcule les lignes de paie d'un bulletin (dict enrichi)."""
+    emp = EMP_BY_ID[b["emp"]]
     base = b["base"]
     primes_total = sum(m for _, m in b["primes"])
     brut = round(base + b["hs_montant"] + primes_total, 2)
@@ -190,6 +297,11 @@ def calc(b):
     lignes_cot.append(("Mutuelle sante obligatoire", MUTUELLE))
     if b.get("anomalie") == "double_mutuelle":
         lignes_cot.append(("Mutuelle sante obligatoire", MUTUELLE))
+    # Ligne prevoyance : presente pour les ETAM, ABSENTE pour les CADRES
+    # (les cadres devraient pourtant etre couverts -> anomalie de conformite)
+    if emp["categorie"] == "ETAM":
+        lignes_cot.append(("Prevoyance obligatoire (0,86 % TA)",
+                           round(brut * PREVOYANCE_TAUX_ETAM, 2)))
 
     total_cot = round(sum(m for _, m in lignes_cot), 2)
     net_avant_impot = round(brut - total_cot, 2)
@@ -208,6 +320,61 @@ def calc(b):
     }
 
 
+# ── AVATARS (SVG deterministes, sans dependance reseau) ─────────────────────
+_AVA_BG = ["#e0e7ff", "#dbeafe", "#dcfce7", "#fef3c7", "#fce7f3", "#ede9fe",
+           "#ccfbf1", "#ffe4e6"]
+_AVA_SKIN = ["#f4d4b8", "#e8b892", "#cf9d6f", "#a9714a", "#f7ddc9", "#8d5a3c"]
+_AVA_HAIR = ["#2b2b2b", "#4a2f1b", "#6b4423", "#9aa0a6", "#111827", "#5c3a21",
+             "#b0763a"]
+_AVA_CLOTH = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
+              "#14b8a6", "#ef4444"]
+
+
+def _ava_seed(emp):
+    h = hashlib.md5(emp["matricule"].encode()).hexdigest()
+    return [int(h[i:i + 2], 16) for i in range(0, 14, 2)]
+
+
+def avatar_svg(emp):
+    """Retourne un <svg> d'avatar illustre, deterministe par matricule.
+    Le conteneur (.avatar / .big) applique le clip circulaire en CSS."""
+    s = _ava_seed(emp)
+    bg = _AVA_BG[s[0] % len(_AVA_BG)]
+    skin = _AVA_SKIN[s[1] % len(_AVA_SKIN)]
+    hair = _AVA_HAIR[s[2] % len(_AVA_HAIR)]
+    cloth = _AVA_CLOTH[s[4] % len(_AVA_CLOTH)]
+    style = s[3] % 4
+
+    hairs = {
+        0: f'<path d="M27 46 Q28 22 50 22 Q72 22 73 46 Q66 34 50 34 Q34 34 27 46Z" fill="{hair}"/>',
+        1: f'<path d="M30 41 Q34 24 50 24 Q66 24 70 41 Q60 33 50 33 Q40 33 30 41Z" fill="{hair}"/>',
+        2: ('<path d="M25 68 Q22 24 50 21 Q78 24 75 68 Q73 46 66 45 '
+            f'Q70 34 50 32 Q30 34 34 45 Q27 46 25 68Z" fill="{hair}"/>').format(hair=hair),
+        3: ('<path d="M28 45 Q26 30 34 26 Q38 18 50 20 Q62 18 66 26 '
+            f'Q74 30 72 45 Q66 34 50 33 Q34 34 28 45Z" fill="{hair}"/>').format(hair=hair),
+    }
+    return (
+        '<svg viewBox="0 0 100 100" width="100%" height="100%" '
+        f'preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">'
+        f'<rect width="100" height="100" fill="{bg}"/>'
+        f'<path d="M14 100 Q14 74 50 74 Q86 74 86 100Z" fill="{cloth}"/>'
+        f'<rect x="43" y="62" width="14" height="16" fill="{skin}"/>'
+        f'<circle cx="29" cy="50" r="4" fill="{skin}"/>'
+        f'<circle cx="71" cy="50" r="4" fill="{skin}"/>'
+        f'<ellipse cx="50" cy="49" rx="21" ry="24" fill="{skin}"/>'
+        f'{hairs[style]}'
+        '<circle cx="42" cy="49" r="2.6" fill="#374151"/>'
+        '<circle cx="58" cy="49" r="2.6" fill="#374151"/>'
+        '<path d="M43 59 Q50 65 57 59" stroke="#a85f50" stroke-width="2.2" '
+        'fill="none" stroke-linecap="round"/>'
+        '</svg>'
+    )
+
+
+def initiales(e):
+    return (e["prenom"][0] + e["nom"][0]).upper()
+
+
 # ── MISE EN PAGE ────────────────────────────────────────────────────────────
 CSS = """
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -221,7 +388,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 a{color:inherit;text-decoration:none}
 .layout{display:flex;min-height:100vh}
 /* Sidebar */
-.sb{width:238px;background:var(--sb);color:#cbd5e1;flex-shrink:0;
+.sb{width:248px;background:var(--sb);color:#cbd5e1;flex-shrink:0;
   display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .sb-logo{display:flex;align-items:center;gap:.6rem;padding:1.25rem 1.25rem;
   border-bottom:1px solid var(--sb2)}
@@ -244,8 +411,12 @@ a{color:inherit;text-decoration:none}
 .top .crumb{font-size:13px;color:var(--muted)}
 .top .crumb b{color:var(--ink)}
 .top .user{margin-left:auto;display:flex;align-items:center;gap:.6rem;font-size:13px}
-.avatar{width:32px;height:32px;border-radius:50%;background:var(--brand);color:#fff;
-  display:grid;place-items:center;font-weight:700;font-size:12px}
+/* Avatars */
+.avatar{width:32px;height:32px;border-radius:50%;overflow:hidden;flex-shrink:0;
+  background:#e0e7ff;line-height:0;box-shadow:inset 0 0 0 1px rgba(15,23,42,.06)}
+.avatar svg{display:block;width:100%;height:100%}
+.avatar.initials{display:grid;place-items:center;background:var(--brand);color:#fff;
+  font-weight:700;font-size:12px;line-height:1}
 .wrap{padding:1.75rem;max-width:1100px;width:100%;margin:0 auto}
 h1.page{font-size:22px;font-weight:700;letter-spacing:-.02em}
 .sub{color:var(--muted);font-size:13.5px;margin-top:.2rem}
@@ -270,26 +441,41 @@ tbody tr:last-child td{border-bottom:none}
 tbody tr{transition:background .1s}
 tbody tr.clic:hover{background:#f8fafc;cursor:pointer}
 .emp-cell{display:flex;align-items:center;gap:.75rem}
-.emp-cell .avatar{background:#e0e7ff;color:var(--brand-d)}
 .emp-cell b{font-weight:600}
 .emp-cell small{display:block;color:var(--muted);font-size:12px}
 .badge{display:inline-block;padding:.2rem .6rem;border-radius:20px;font-size:11.5px;font-weight:650}
 .b-green{background:#dcfce7;color:#15803d}
 .b-gray{background:#f1f5f9;color:#475569}
 .b-blue{background:#dbeafe;color:#1d4ed8}
+.b-red{background:#fee2e2;color:#b91c1c}
+.b-amber{background:#fef3c7;color:#b45309}
 .link{color:var(--brand);font-weight:600}
 .right{text-align:right}
 /* Fiche employe */
 .profile{display:flex;gap:1.25rem;align-items:center;background:var(--card);
   border:1px solid var(--line);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
-.profile .big{width:64px;height:64px;border-radius:50%;background:var(--brand);color:#fff;
-  display:grid;place-items:center;font-size:22px;font-weight:750}
+.profile .big{width:66px;height:66px;border-radius:50%;overflow:hidden;flex-shrink:0;
+  background:#e0e7ff;line-height:0;box-shadow:inset 0 0 0 1px rgba(15,23,42,.06)}
+.profile .big svg{display:block;width:100%;height:100%}
 .profile h1{font-size:20px}
 .profile .meta{color:var(--muted);font-size:13.5px;margin-top:.15rem}
 .info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
 .info-grid .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.9rem 1.1rem}
 .info-grid .box .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;font-weight:600}
 .info-grid .box .v{font-size:14px;font-weight:600;margin-top:.25rem}
+/* Prevoyance */
+.contract-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.5rem 0}
+.contract{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.25rem;
+  display:flex;flex-direction:column;gap:.6rem}
+.contract .ctype{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.contract .cnom{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.contract .cmeta{font-size:12.5px;color:var(--muted)}
+.contract .cfoot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;
+  padding-top:.6rem;border-top:1px solid var(--line)}
+.note{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:.9rem 1.1rem;
+  font-size:13px;color:#9a3412;line-height:1.55;margin-top:.4rem}
+.note b{color:#7c2d12}
+.gtable td{font-size:13px}
 /* Bulletin */
 .payslip{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .ps-head{padding:1.5rem 1.75rem;border-bottom:2px solid var(--ink);
@@ -334,12 +520,8 @@ tbody tr.clic:hover{background:#f8fafc;cursor:pointer}
 .hint{margin-top:1rem;font-size:12px;color:var(--muted);background:#f8fafc;
   border:1px dashed var(--line);border-radius:8px;padding:.65rem .8rem;line-height:1.6}
 .hint code{color:var(--brand-d);font-weight:600}
-@media(max-width:820px){.sb{display:none}.stats,.info-grid{grid-template-columns:1fr 1fr}.ps-two{grid-template-columns:1fr}}
+@media(max-width:820px){.sb{display:none}.stats,.info-grid,.contract-grid{grid-template-columns:1fr 1fr}.ps-two{grid-template-columns:1fr}}
 """
-
-
-def initiales(e):
-    return (e["prenom"][0] + e["nom"][0]).upper()
 
 
 def shell(title, body, active=""):
@@ -361,6 +543,7 @@ def shell(title, body, active=""):
       {nav('/rh/dashboard','▦','Tableau de bord','dash')}
       {nav('/rh/employes','◉','Employes','emp')}
       {nav('/rh/bulletins','▤','Bulletins de paie','bul')}
+      {nav('/rh/prevoyance','✚','Prevoyance & protection sociale','prev')}
       {nav('/rh/conges','◷','Conges & absences','conges')}
       {nav('/rh/documents','▢','Documents RH','docs')}
     </nav>
@@ -369,7 +552,7 @@ def shell(title, body, active=""):
   <div class="main">
     <div class="top">
       <div class="crumb">{title}</div>
-      <div class="user"><span>Audit externe</span><div class="avatar">AX</div></div>
+      <div class="user"><span>Audit externe</span><div class="avatar initials">AX</div></div>
     </div>
     <div class="wrap">{body}</div>
   </div>
@@ -407,13 +590,13 @@ def dashboard():
     for b in [x for x in BULLETINS if x["mois"] == "Mars 2025"][:6]:
         e = EMP_BY_ID[b["emp"]]
         c = calc(b)
-        rows += f"""<tr class="clic" onclick="location.href='/rh/bulletin/{b['id']}'">
-          <td><div class="emp-cell"><div class="avatar">{initiales(e)}</div>
+        rows += f"""<tr class="clic" data-href="/rh/bulletin/{b['id']}" onclick="location.href='/rh/bulletin/{b['id']}'">
+          <td><div class="emp-cell"><div class="avatar">{avatar_svg(e)}</div>
             <div><b>{e['prenom']} {e['nom']}</b><small>{e['poste']}</small></div></div></td>
           <td>{b['mois']}</td>
           <td class="right">{eur(c['brut'])}</td>
           <td class="right">{eur(c['net_paye'])}</td>
-          <td><span class="link">Ouvrir →</span></td></tr>"""
+          <td><a class="link" href="/rh/bulletin/{b['id']}">Ouvrir →</a></td></tr>"""
 
     body = f"""
     <h1 class="page">Tableau de bord</h1>
@@ -437,19 +620,21 @@ def employes():
     rows = ""
     for e in EMPLOYES:
         n = len(bulletins_de(e["id"]))
-        rows += f"""<tr class="clic" onclick="location.href='/rh/employe/{e['id']}'">
-          <td><div class="emp-cell"><div class="avatar">{initiales(e)}</div>
+        cat_cls = "b-blue" if e["categorie"] == "Cadre" else "b-gray"
+        rows += f"""<tr class="clic" data-href="/rh/employe/{e['id']}" onclick="location.href='/rh/employe/{e['id']}'">
+          <td><div class="emp-cell"><div class="avatar">{avatar_svg(e)}</div>
             <div><b>{e['prenom']} {e['nom']}</b><small>{e['matricule']}</small></div></div></td>
           <td>{e['poste']}</td>
           <td>{e['service']}</td>
+          <td><span class="badge {cat_cls}">{e['categorie']}</span></td>
           <td>{e['contrat']}</td>
           <td>{n} bulletin{'s' if n>1 else ''}</td>
-          <td><span class="badge b-green">{e['statut']}</span></td></tr>"""
+          <td><a class="link" href="/rh/employe/{e['id']}">Fiche →</a></td></tr>"""
     body = f"""
     <h1 class="page">Employes</h1>
     <p class="sub">{len(EMPLOYES)} salaries — cliquez sur une ligne pour ouvrir la fiche</p>
     <div class="card" style="margin-top:1.5rem">
-      <table><thead><tr><th>Nom</th><th>Poste</th><th>Service</th><th>Contrat</th><th>Paie</th><th>Statut</th></tr></thead>
+      <table><thead><tr><th>Nom</th><th>Poste</th><th>Service</th><th>Categorie</th><th>Contrat</th><th>Paie</th><th></th></tr></thead>
       <tbody>{rows}</tbody></table>
     </div>"""
     return shell("Employes", body, "emp")
@@ -463,15 +648,17 @@ def employe(eid):
     rows = ""
     for b in bulletins_de(eid):
         c = calc(b)
-        rows += f"""<tr class="clic" onclick="location.href='/rh/bulletin/{b['id']}'">
+        rows += f"""<tr class="clic" data-href="/rh/bulletin/{b['id']}" onclick="location.href='/rh/bulletin/{b['id']}'">
           <td><b>{b['mois']}</b><small style="display:block;color:var(--muted)">{b['periode']}</small></td>
           <td class="right">{eur(c['brut'])}</td>
           <td class="right">{eur(c['total_cot'])}</td>
           <td class="right">{eur(c['net_paye'])}</td>
-          <td><span class="link">Voir le bulletin →</span></td></tr>"""
+          <td><a class="link" href="/rh/bulletin/{b['id']}">Voir le bulletin →</a></td></tr>"""
+    prev = "Couvert (ETAM)" if e["categorie"] == "ETAM" else "Non couvert (cadre)"
+    prev_cls = "b-green" if e["categorie"] == "ETAM" else "b-red"
     body = f"""
     <div class="profile">
-      <div class="big">{initiales(e)}</div>
+      <div class="big">{avatar_svg(e)}</div>
       <div>
         <h1>{e['prenom']} {e['nom']}</h1>
         <div class="meta">{e['poste']} · {e['service']} · matricule {e['matricule']}</div>
@@ -480,9 +667,9 @@ def employe(eid):
     </div>
     <div class="info-grid">
       <div class="box"><div class="k">Contrat</div><div class="v">{e['contrat']}</div></div>
+      <div class="box"><div class="k">Categorie</div><div class="v">{e['categorie']}</div></div>
       <div class="box"><div class="k">Date d'entree</div><div class="v">{e['entree']}</div></div>
-      <div class="box"><div class="k">Service</div><div class="v">{e['service']}</div></div>
-      <div class="box"><div class="k">Convention</div><div class="v">Syntec</div></div>
+      <div class="box"><div class="k">Prevoyance</div><div class="v"><span class="badge {prev_cls}">{prev}</span></div></div>
     </div>
     <div class="card">
       <div class="card-h"><h2>Bulletins de paie</h2></div>
@@ -498,13 +685,13 @@ def bulletins():
     for b in BULLETINS:
         e = EMP_BY_ID[b["emp"]]
         c = calc(b)
-        rows += f"""<tr class="clic" onclick="location.href='/rh/bulletin/{b['id']}'">
-          <td><div class="emp-cell"><div class="avatar">{initiales(e)}</div>
+        rows += f"""<tr class="clic" data-href="/rh/bulletin/{b['id']}" onclick="location.href='/rh/bulletin/{b['id']}'">
+          <td><div class="emp-cell"><div class="avatar">{avatar_svg(e)}</div>
             <div><b>{e['prenom']} {e['nom']}</b><small>{e['poste']}</small></div></div></td>
           <td>{b['mois']}</td>
           <td class="right">{eur(c['brut'])}</td>
           <td class="right">{eur(c['net_paye'])}</td>
-          <td><span class="link">Ouvrir →</span></td></tr>"""
+          <td><a class="link" href="/rh/bulletin/{b['id']}">Ouvrir →</a></td></tr>"""
     body = f"""
     <h1 class="page">Bulletins de paie</h1>
     <p class="sub">{len(BULLETINS)} bulletins emis — exercice 2025</p>
@@ -540,7 +727,6 @@ def bulletin(bid):
         cots += f"""<tr><td>{lib}</td><td class="n"></td><td class="n"></td><td class="n">-{eur(m)}</td></tr>"""
 
     # Bandeau temps de travail (rend l'anomalie HS lisible dans le texte)
-    temps = ""
     if b["hs_h"]:
         temps = f"""<div><div class="k">Temps de travail</div>
           <div class="lbl">Heures contractuelles : <b>151,67 h</b></div>
@@ -570,7 +756,7 @@ def bulletin(bid):
         <div><div class="k">Salarie</div>
           <div class="lbl"><b>{e['prenom']} {e['nom']}</b></div>
           <div class="lbl">{e['poste']} — {e['service']}</div>
-          <div class="lbl">Matricule {e['matricule']}</div>
+          <div class="lbl">Matricule {e['matricule']} · Categorie {e['categorie']}</div>
           <div class="lbl">Contrat : {e['contrat']}</div>
           <div class="lbl">Entree le {e['entree']}</div>
         </div>
@@ -596,6 +782,95 @@ def bulletin(bid):
       </div>
     </div>"""
     return shell(f"Bulletin {b['mois']} — {e['nom']}", body, "bul")
+
+
+# ── PREVOYANCE & PROTECTION SOCIALE ─────────────────────────────────────────
+@rh.route("/rh/prevoyance")
+def prevoyance():
+    # Cartes contrats
+    cards = ""
+    for c in CONTRATS_SOCIAUX:
+        cats = ", ".join(c["categories"])
+        cards += f"""
+        <div class="contract">
+          <div class="ctype">{c['type']}</div>
+          <div class="cnom">{c['organisme']}</div>
+          <div class="cmeta">Reference {c['reference']} · effet {c['effet']}</div>
+          <div class="cmeta">Categories couvertes : <b>{cats}</b></div>
+          <div class="cmeta">Assiette : {c['assiette']} · {c['taux']}</div>
+          <div class="cfoot">
+            <span class="badge {'b-green' if c['obligatoire'] else 'b-gray'}">{'Obligatoire' if c['obligatoire'] else 'Facultatif'}</span>
+            <a class="link" href="/rh/prevoyance/{c['id']}">Voir le contrat →</a>
+          </div>
+        </div>"""
+
+    # Tableau de couverture par categorie
+    mut = CONTRAT_BY_ID["mutuelle"]
+    prev = CONTRAT_BY_ID["prevoyance"]
+    cov_rows = ""
+    for cat in categories_effectif():
+        m_ok = couvert(mut, cat)
+        p_ok = couvert(prev, cat)
+        m_badge = '<span class="badge b-green">Couvert</span>' if m_ok else '<span class="badge b-red">Non couvert</span>'
+        p_badge = '<span class="badge b-green">Couvert</span>' if p_ok else '<span class="badge b-red">Non couvert</span>'
+        cov_rows += f"""<tr>
+          <td><b>{cat}</b></td>
+          <td>{effectif_cat(cat)} salarie{'s' if effectif_cat(cat)>1 else ''}</td>
+          <td>{m_badge}</td>
+          <td>{p_badge}</td></tr>"""
+
+    note = ""
+    if not couvert(prev, "Cadre"):
+        ncadres = effectif_cat("Cadre")
+        note = f"""<div class="note"><b>Vigilance conformite.</b> {prev['note']}
+          {ncadres} salarie(s) cadre(s) concerne(s) : aucune ligne de cotisation prevoyance
+          n'apparait sur leurs bulletins.</div>"""
+
+    body = f"""
+    <h1 class="page">Prevoyance & protection sociale</h1>
+    <p class="sub">Contrats collectifs de {ENTREPRISE['nom']} et couverture par categorie</p>
+    <div class="contract-grid">{cards}</div>
+    <div class="card">
+      <div class="card-h"><h2>Couverture par categorie de personnel</h2></div>
+      <table><thead><tr><th>Categorie</th><th>Effectif</th><th>Mutuelle sante</th><th>Prevoyance</th></tr></thead>
+      <tbody>{cov_rows}</tbody></table>
+    </div>
+    {note}"""
+    return shell("Prevoyance & protection sociale", body, "prev")
+
+
+@rh.route("/rh/prevoyance/<cid>")
+def prevoyance_contrat(cid):
+    c = CONTRAT_BY_ID.get(cid)
+    if not c:
+        return shell("Introuvable", "<h1 class='page'>Contrat introuvable</h1>"), 404
+    gar = ""
+    for lib, val in c["garanties"]:
+        gar += f"""<tr><td><b>{lib}</b></td><td>{val}</td></tr>"""
+    cats = ""
+    for cat in ["Cadre", "ETAM"]:
+        ok = cat in c["categories"]
+        cats += f'<span class="badge {"b-green" if ok else "b-red"}" style="margin-right:.4rem">{cat} : {"couvert" if ok else "non couvert"}</span>'
+    note = f"""<div class="note"><b>Point de conformite.</b> {c['note']}</div>""" if c.get("note") else ""
+
+    body = f"""
+    <p class="sub" style="margin-bottom:1rem"><a class="link" href="/rh/prevoyance">← Prevoyance & protection sociale</a></p>
+    <h1 class="page">{c['organisme']}</h1>
+    <p class="sub">{c['type']} · reference {c['reference']}</p>
+    <div class="info-grid" style="margin-top:1.5rem">
+      <div class="box"><div class="k">Organisme</div><div class="v">{c['organisme']}</div></div>
+      <div class="box"><div class="k">Effet</div><div class="v">{c['effet']}</div></div>
+      <div class="box"><div class="k">Assiette</div><div class="v">{c['assiette']}</div></div>
+      <div class="box"><div class="k">Cotisation</div><div class="v">{c['taux']}</div></div>
+    </div>
+    <div style="margin-bottom:1.25rem">{cats}</div>
+    <div class="card">
+      <div class="card-h"><h2>Garanties</h2></div>
+      <table class="gtable"><thead><tr><th>Garantie</th><th>Niveau</th></tr></thead>
+      <tbody>{gar}</tbody></table>
+    </div>
+    {note}"""
+    return shell(f"Contrat {c['organisme']}", body, "prev")
 
 
 # Pages secondaires (donnent de la matiere a crawler, liens internes)
@@ -629,6 +904,9 @@ def documents_rh():
         ("Convention collective Syntec (IDCC 1486)", "Lien externe"),
         ("Grille des salaires minima 2025", "PDF · 01/2025"),
         ("Note de service — tickets restaurant", "PDF · 02/2025"),
+        ("Contrat de prevoyance collective — AG2R (PV-2022-1187)", "PDF · 06/2022"),
+        ("Decision unilaterale de l'employeur (DUE) — frais de sante", "PDF · 01/2023"),
+        ("Notice d'information prevoyance", "PDF · 06/2022"),
     ]
     rows = ""
     for titre, meta in docs:
