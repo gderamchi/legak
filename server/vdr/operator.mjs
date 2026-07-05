@@ -280,7 +280,7 @@ async function ensureCursorOverlay(page) {
   }
 }
 
-async function showAgentPointer(page, x, y, { click = false, label = '', move = true } = {}) {
+async function showAgentPointer(page, x, y, { click = false, label = '', move = true, fast = false } = {}) {
   try {
     await page.evaluate(({ x, y, click, label, move }) => {
       window.__legakCursor?.act(x, y, { click, label, move })
@@ -288,9 +288,22 @@ async function showAgentPointer(page, x, y, { click = false, label = '', move = 
   } catch {
     /* ignore */
   }
-  const moveMs = move ? 380 : 0
-  const clickMs = click ? 420 : 0
+  const moveMs = move ? (fast ? 180 : 380) : 0
+  const clickMs = click ? (fast ? 200 : 420) : 0
   await new Promise((resolve) => setTimeout(resolve, moveMs + clickMs))
+}
+
+// Curseur visible sur un élément ciblé par sélecteur — utilisé par les parcours
+// scriptés pour que la vue live montre où l'agent agit (comme en mode modèle).
+async function pointAt(page, selector, { click = false, label = '', move = true, fast = true } = {}) {
+  try {
+    const box = await (await page.$(selector))?.boundingBox()
+    if (box) {
+      await showAgentPointer(page, box.x + box.width / 2, box.y + box.height / 2, { click, label, move, fast })
+    }
+  } catch {
+    /* overlay indisponible : l'action scriptée reste valable sans le visuel */
+  }
 }
 
 async function attachLiveView(page, live) {
@@ -397,6 +410,8 @@ async function createComputerUseSession({ page, recorder, vdrBase, live = null }
     if (args.safety_decision && args.safety_decision.decision !== 'block') {
       result.safety_acknowledgement = true
     }
+    stats.actions += 1
+    live?.status({ actions: stats.actions })
     try {
       if (name === 'open_web_browser' || name === 'open_app' || name === 'take_screenshot') {
         // rien à faire : l'écran est recapturé après chaque action
@@ -483,7 +498,6 @@ async function createComputerUseSession({ page, recorder, vdrBase, live = null }
     } catch (error) {
       result.error = String(error?.message ?? error).slice(0, 300)
     }
-    stats.actions += 1
     await recorder.snap(page, name, args.intent ?? `Action ${name} exécutée`, {
       decidedBy: 'gemini-computer-use',
       intent: args.intent ?? null,
@@ -564,21 +578,34 @@ async function driveTo({ cu, page, recorder, goal, budget, verify, fallback, lab
 }
 
 // ── Parcours scriptés (fallback sans clé, et reprise ciblée) ─────────────────
+// Même contrat visuel que le mode modèle : curseur visible, compteur d'actions
+// incrémenté en direct — le parcours reste étiqueté decidedBy: "code".
 
-async function scriptedLogin(page, vdrBase) {
+const countScripted = (live, stats) => {
+  stats.actions += 1
+  live?.status({ actions: stats.actions })
+}
+
+async function scriptedLogin(page, vdrBase, { live = null, stats = null } = {}) {
   await page.goto(`${vdrBase}/login`, { waitUntil: 'domcontentloaded' })
+  await pointAt(page, '#access-code', { click: true, label: 'Saisir le code d’accès remis par le vendeur' })
   await page.fill('#access-code', VDR_ACCESS_CODE)
+  if (stats) countScripted(live, stats)
+  await pointAt(page, '#login-submit', { click: true, label: 'Entrer dans la salle' })
   await page.click('#login-submit')
+  if (stats) countScripted(live, stats)
   await page.waitForSelector('.folder-link', { timeout: 10_000 })
 }
 
-async function scriptedQaSubmit(page, item) {
+async function scriptedQaSubmit(page, item, { live = null, stats = null } = {}) {
   await page.fill('#qa-subject', item.piece.slice(0, 160))
   await page.fill('#qa-question', item.question.slice(0, 600))
   const urgency = item.urgency === 'haute' ? 'haute' : item.urgency === 'basse' ? 'basse' : 'moyenne'
   await page.check(`#qa-urgency-${urgency}`)
   await page.fill('#qa-author', 'Legak — conseil acquéreur')
+  await pointAt(page, '#qa-submit', { click: true, label: `Déposer : ${item.piece.slice(0, 90)}`, move: false })
   await page.click('#qa-submit')
+  if (stats) countScripted(live, stats)
   await page.waitForLoadState('domcontentloaded')
 }
 
@@ -603,7 +630,7 @@ export async function collectFromVdr({ vdrBase, evidenceDir, prefix = 'collecte'
       goal: `Sur cette page de connexion à la salle de données, clique le champ « Code d'accès », saisis ${VDR_ACCESS_CODE}, puis clique « Entrer dans la salle ». État d'arrivée : la liste des dossiers de la salle est affichée.`,
       budget: 6,
       verify: () => page.waitForSelector('.folder-link', { timeout: 10_000 }),
-      fallback: () => scriptedLogin(page, vdrBase),
+      fallback: () => scriptedLogin(page, vdrBase, { live, stats }),
     })
     await recorder.snap(page, 'salle-ouverte', 'Session ouverte : arborescence de la salle de données')
 
@@ -624,7 +651,13 @@ export async function collectFromVdr({ vdrBase, evidenceDir, prefix = 'collecte'
           if (page.url() !== folderUrl) throw new Error('page inattendue')
           await page.waitForSelector('.doc-link, table', { timeout: 5_000 })
         },
-        fallback: () => page.goto(folderUrl, { waitUntil: 'domcontentloaded' }),
+        fallback: async () => {
+          const roomUrl = `${vdrBase}/room`
+          if (page.url() !== roomUrl) await page.goto(roomUrl, { waitUntil: 'domcontentloaded' })
+          await pointAt(page, `.folder-link[href="${folder.href}"]`, { click: true, label: `Ouvrir « ${folder.label} »` })
+          countScripted(live, stats)
+          await page.goto(folderUrl, { waitUntil: 'domcontentloaded' })
+        },
       })
       await recorder.snap(page, `dossier-${folder.label}`, `Dossier « ${folder.label} » ouvert`)
 
@@ -642,7 +675,12 @@ export async function collectFromVdr({ vdrBase, evidenceDir, prefix = 'collecte'
             const shown = (await page.textContent('#doc-name'))?.trim()
             if (shown !== docLink.name) throw new Error(`document affiché « ${shown} » ≠ attendu`)
           },
-          fallback: () => page.goto(docUrl, { waitUntil: 'domcontentloaded' }),
+          fallback: async () => {
+            if (page.url() !== folderUrl) await page.goto(folderUrl, { waitUntil: 'domcontentloaded' })
+            await pointAt(page, `.doc-link[href="${docLink.href}"]`, { click: true, label: `Lire en place : ${docLink.name}` })
+            countScripted(live, stats)
+            await page.goto(docUrl, { waitUntil: 'domcontentloaded' })
+          },
         })
 
         const name = (await page.textContent('#doc-name'))?.trim() ?? docLink.name
@@ -697,7 +735,7 @@ export async function postQaToVdr({ vdrBase, evidenceDir, items, prefix = 'qa', 
       goal: `Sur cette page de connexion à la salle de données, clique le champ « Code d'accès », saisis ${VDR_ACCESS_CODE}, puis clique « Entrer dans la salle ». État d'arrivée : la liste des dossiers de la salle est affichée.`,
       budget: 6,
       verify: () => page.waitForSelector('.folder-link', { timeout: 10_000 }),
-      fallback: () => scriptedLogin(page, vdrBase),
+      fallback: () => scriptedLogin(page, vdrBase, { live, stats }),
     })
 
     await driveTo({
@@ -733,7 +771,7 @@ export async function postQaToVdr({ vdrBase, evidenceDir, items, prefix = 'qa', 
         },
         fallback: async () => {
           if (!page.url().endsWith('/qa')) await page.goto(`${vdrBase}/qa`, { waitUntil: 'domcontentloaded' })
-          await scriptedQaSubmit(page, item)
+          await scriptedQaSubmit(page, item, { live, stats })
         },
       })
       posted.push(item.id)

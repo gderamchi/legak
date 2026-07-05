@@ -731,6 +731,7 @@ function ProductApp() {
   const busyRef = useRef(false)
   const lastActionRef = useRef<{ label: string; action: () => Promise<void> } | null>(null)
   const alertRef = useRef<HTMLDivElement | null>(null)
+  const vdrLiveRef = useRef<HTMLElement | null>(null)
   const [busySeconds, setBusySeconds] = useState(0)
 
   useEffect(() => {
@@ -747,6 +748,20 @@ function ProductApp() {
   useEffect(() => {
     if (error) alertRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [error])
+
+  // La vue live de l'agent VDR se monte en haut de page ; si le run est lancé
+  // depuis le bas (ex. dépôt Q&A au pied du rapport), on amène l'écran piloté
+  // dans le viewport pour que l'opération reste visible. Déclenché par
+  // streamKey : une fois par run, pas à chaque rafraîchissement du statut.
+  const vdrStreamKey = vdrLive?.streamKey
+  useEffect(() => {
+    if (vdrStreamKey) {
+      vdrLiveRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block: 'start',
+      })
+    }
+  }, [vdrStreamKey])
 
   useEffect(() => {
     aliveRef.current = true
@@ -1291,7 +1306,7 @@ function ProductApp() {
           </div>
         )}
         {vdrLive && mission && (
-          <section className="panel vdr-live" aria-label="Agent computer use en direct">
+          <section className="panel vdr-live" aria-label="Agent computer use en direct" ref={vdrLiveRef}>
             <div className="vdr-live-head">
               <span className="vdr-live-dot" aria-hidden="true" />
               <strong>
