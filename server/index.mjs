@@ -548,6 +548,14 @@ createServer(async (req, res) => {
       })
     }
 
+    // Cadrage de la cible fictive (parcours démo) : le front recopie ces
+    // valeurs dans le formulaire — le préremplissage reste un geste explicite
+    // de l'utilisateur, jamais un défaut silencieux du serveur.
+    if (req.method === 'GET' && url.pathname === '/api/demo-cadrage') {
+      const { period: _period, ...cadrage } = demoTarget
+      return send(res, 200, cadrage)
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/missions') {
       return send(res, 201, missionView(createMission(await readJson(req))))
     }

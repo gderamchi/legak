@@ -143,6 +143,18 @@ type Report = {
   spaRecommendations: { clauses: { risque: string; titre: string; clause: string }[] }
 }
 
+/* Cadrage de la cible fictive renvoyé par /api/demo-cadrage : sert au
+   préremplissage explicite du formulaire pour dérouler la démo sans saisie. */
+type DemoCadrage = {
+  target: string
+  siren: string
+  siret: string
+  convention: string
+  effectif: number
+  periodStart: string
+  periodEnd: string
+}
+
 type Mission = {
   id: string
   target: string
@@ -708,6 +720,7 @@ function ProductApp() {
   const [analysisLive, setAnalysisLive] = useState<{ running: boolean; phase: string | null; events: ProofEvent[] } | null>(null)
   const [vdrLive, setVdrLive] = useState<{ streamKey: number; status: VdrLiveStatus } | null>(null)
   const [vdrLiveFrameUrl, setVdrLiveFrameUrl] = useState<string | null>(null)
+  const [demoPrefill, setDemoPrefill] = useState<DemoCadrage | null>(null)
   const [expandedControls, setExpandedControls] = useState<Set<string>>(new Set())
   const [dragOver, setDragOver] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -948,6 +961,16 @@ function ProductApp() {
     })
   }
 
+  function prefillDemoCadrage() {
+    void run('Chargement du cadrage de démonstration…', async () => {
+      const cadrage = await api<DemoCadrage>('/api/demo-cadrage')
+      setDemoPrefill(cadrage)
+      setNotice({
+        text: `Formulaire prérempli avec la cible fictive ${cadrage.target} — vérifiez les champs puis ouvrez la mission.`,
+      })
+    })
+  }
+
   function loadDemoDataRoom() {
     if (!mission) return
     if (mission.documents.length && !window.confirm(`Le jeu de démonstration remplacera les ${mission.documents.length} pièce(s) déjà reçues. Continuer ?`)) return
@@ -1135,7 +1158,7 @@ function ProductApp() {
         mission.siren ? `SIREN ${mission.siren}` : null,
         mission.convention,
         mission.effectif ? `${mission.effectif} salariés` : null,
-        `période ${mission.period}`,
+        `période ${frPeriod(mission.period)}`,
       ]
         .filter(Boolean)
         .join(' · ')
@@ -1203,7 +1226,7 @@ function ProductApp() {
             <dl>
               <div>
                 <dt>Période</dt>
-                <dd>{mission.period}</dd>
+                <dd>{frPeriod(mission.period)}</dd>
               </div>
               {mission.siren && (
                 <div>
@@ -1351,8 +1374,20 @@ function ProductApp() {
                   fausse. Le cadrage génère la liste de pièces attendues.
                 </p>
               </div>
+              {!mission && (
+                <div className="panel-head-actions">
+                  <button className="btn btn-ghost" type="button" onClick={prefillDemoCadrage} disabled={busy}>
+                    Pré-remplir avec la cible de démonstration
+                  </button>
+                  <small>Cible fictive de la data room de démo — rien n’est envoyé avant l’ouverture.</small>
+                </div>
+              )}
             </div>
-            <form className="form-card" onSubmit={createMission}>
+            <form
+              className="form-card"
+              key={`cadrage-${mission?.id ?? 'nouvelle'}-${demoPrefill ? 'demo' : 'vierge'}`}
+              onSubmit={createMission}
+            >
               <div className="form-grid">
                 <div className="field is-wide">
                   <label htmlFor="f-target">
@@ -1363,7 +1398,7 @@ function ProductApp() {
                     name="target"
                     required
                     placeholder="Raison sociale de la société auditée"
-                    defaultValue={mission?.target ?? ''}
+                    defaultValue={mission?.target ?? demoPrefill?.target ?? ''}
                   />
                 </div>
                 <div className="field">
@@ -1375,7 +1410,7 @@ function ProductApp() {
                     pattern="\d{9}"
                     title="9 chiffres"
                     placeholder="9 chiffres"
-                    defaultValue={mission?.siren ?? ''}
+                    defaultValue={mission?.siren ?? demoPrefill?.siren ?? ''}
                   />
                   <small>Sert au contrôle de périmètre.</small>
                 </div>
@@ -1388,7 +1423,7 @@ function ProductApp() {
                     pattern="\d{14}"
                     title="14 chiffres"
                     placeholder="14 chiffres (optionnel)"
-                    defaultValue={mission?.siret ?? ''}
+                    defaultValue={mission?.siret ?? demoPrefill?.siret ?? ''}
                   />
                 </div>
                 <div className="field">
@@ -1399,21 +1434,33 @@ function ProductApp() {
                     type="number"
                     min="1"
                     placeholder="Nombre de salariés"
-                    defaultValue={mission?.effectif ?? ''}
+                    defaultValue={mission?.effectif ?? demoPrefill?.effectif ?? ''}
                   />
                 </div>
                 <div className="field is-half">
                   <label htmlFor="f-start">
                     Début de période auditée <b aria-hidden="true">*</b>
                   </label>
-                  <input id="f-start" name="periodStart" type="month" required defaultValue={mission?.periodStart ?? ''} />
+                  <input
+                    id="f-start"
+                    name="periodStart"
+                    type="month"
+                    required
+                    defaultValue={mission?.periodStart ?? demoPrefill?.periodStart ?? ''}
+                  />
                   <small>Format AAAA-MM.</small>
                 </div>
                 <div className="field is-half">
                   <label htmlFor="f-end">
                     Fin de période auditée <b aria-hidden="true">*</b>
                   </label>
-                  <input id="f-end" name="periodEnd" type="month" required defaultValue={mission?.periodEnd ?? ''} />
+                  <input
+                    id="f-end"
+                    name="periodEnd"
+                    type="month"
+                    required
+                    defaultValue={mission?.periodEnd ?? demoPrefill?.periodEnd ?? ''}
+                  />
                   <small>La prescription URSSAF couvre 3 ans plus l’année en cours.</small>
                 </div>
                 <div className="field is-wide">
@@ -1422,7 +1469,7 @@ function ProductApp() {
                     id="f-convention"
                     name="convention"
                     placeholder="Ex. : IDCC et intitulé de la branche"
-                    defaultValue={mission?.convention ?? ''}
+                    defaultValue={mission?.convention ?? demoPrefill?.convention ?? ''}
                   />
                 </div>
               </div>
@@ -1456,8 +1503,7 @@ function ProductApp() {
                       .filter(([, count]) => count > 0)
                       .map(([status, count]) => (
                         <span className={tagClass(status)} key={status}>
-                          {count} {status}
-                          {count > 1 && ['reçue', 'manquante', 'partiel'].includes(status) ? 's' : ''}
+                          {count} {requestStatusLabel(status, count)}
                         </span>
                       ))}
                   </div>
