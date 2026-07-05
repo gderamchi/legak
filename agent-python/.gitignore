@@ -5,7 +5,12 @@
 # Fichiers d'exécution générés par l'agent / le serveur
 state.json
 config.json
+config_rh.runtime.json
 downloads/
+# Phase 2 — Antigravity (état durable + livrables générés)
+antigravity_state.json
+antigravity_state.json.tmp
+audit_output/
 
 # Python
 __pycache__/

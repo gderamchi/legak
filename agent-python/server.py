@@ -17,6 +17,7 @@ app.register_blueprint(rh_blueprint)
 BASE_DIR       = Path(__file__).parent
 STATE_FILE     = BASE_DIR / "state.json"
 RH_CONFIG_FILE = BASE_DIR / "config_rh.json"
+RH_CONFIG_RUNTIME = BASE_DIR / "config_rh.runtime.json"  # config effective (start_url surcharge par l'UI)
 AG_STATE_FILE  = BASE_DIR / "antigravity_state.json"
 AG_CONFIG_FILE = BASE_DIR / "config_antigravity.json"
 
@@ -45,16 +46,31 @@ def analyze_rh():
         try: _rh_proc.wait(timeout=3)
         except subprocess.TimeoutExpired: _rh_proc.kill()
 
+    # URL de depart optionnelle envoyee par l'UI (/audit) : on part de la config
+    # de base et on ne surcharge que start_url dans une config "runtime".
+    start_url = (request.get_json(silent=True) or {}).get("start_url", "").strip()
+    config_path = RH_CONFIG_FILE
+    if start_url:
+        if not start_url.startswith(("http://", "https://")):
+            return jsonify({"error": "start_url invalide (doit commencer par http:// ou https://)"}), 400
+        try:
+            cfg = json.loads(RH_CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            cfg = {}
+        cfg["start_url"] = start_url
+        RH_CONFIG_RUNTIME.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        config_path = RH_CONFIG_RUNTIME
+
     STATE_FILE.write_text(json.dumps({
         "status": "starting", "step": 0, "total": 40,
         "current_url": None, "current_log": "Démarrage...", "results": [],
     }, ensure_ascii=False, indent=2))
 
     _rh_proc = subprocess.Popen(
-        [sys.executable, str(BASE_DIR / "agent_rh.py"), str(RH_CONFIG_FILE)],
+        [sys.executable, str(BASE_DIR / "agent_rh.py"), str(config_path)],
         env={**os.environ}, cwd=str(BASE_DIR)
     )
-    return jsonify({"status": "started", "pid": _rh_proc.pid})
+    return jsonify({"status": "started", "pid": _rh_proc.pid, "start_url": start_url or "config"})
 
 
 @app.route("/api/stream")

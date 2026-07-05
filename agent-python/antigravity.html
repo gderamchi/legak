@@ -45,6 +45,10 @@
     .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--r); overflow:hidden; }
     .card-head { padding:.5rem 1rem; border-bottom:1px solid var(--border);
       font-size:.7rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+    .card-head-row { display:flex; align-items:center; gap:.5rem; }
+    .btn-pdf { margin-left:auto; padding:.28rem .7rem; font-size:.68rem;
+      text-transform:none; letter-spacing:0; }
+    .btn-pdf:disabled { opacity:.35; cursor:not-allowed; }
     .log-feed { height:200px; overflow-y:auto; padding:.6rem 1rem;
       font-family:'SF Mono','Fira Code',monospace; font-size:.74rem; line-height:1.7; color:var(--muted); }
     .log-feed .tool { color:var(--accent); }
@@ -111,7 +115,10 @@
   </div>
 
   <div class="card">
-    <div class="card-head">Rapport / clause produits</div>
+    <div class="card-head card-head-row">
+      <span>Rapport / clause produits</span>
+      <button class="btn btn-primary btn-pdf" id="pdfBtn" onclick="openReportPdf()" disabled>&#128196; Ouvrir en PDF</button>
+    </div>
     <div class="report" id="report"><div class="empty">Le rapport apparaîtra ici.</div></div>
   </div>
 
@@ -212,7 +219,63 @@
 
     if (s.report) {
       document.getElementById('report').innerHTML = renderMarkdown(s.report);
+      document.getElementById('pdfBtn').disabled = false;
     }
+  }
+
+  // ── Ouvre le rapport dans une fenetre imprimable (blanc, A4) -> Enregistrer en PDF ──
+  function openReportPdf() {
+    const reportEl = document.getElementById('report');
+    if (!reportEl || reportEl.querySelector('.empty')) return;
+    const score = (document.getElementById('score').textContent || '—').trim();
+    const now = new Date().toLocaleString('fr-FR');
+    const body = reportEl.innerHTML;
+    const css = `
+      @page { size:A4; margin:18mm 16mm; }
+      * { box-sizing:border-box; }
+      body { font-family:Georgia,'Times New Roman',serif; color:#1a1a1a;
+        background:#fff; line-height:1.55; font-size:11.5pt; margin:0; }
+      .doc-head { border-bottom:2px solid #111; padding-bottom:.6rem; margin-bottom:1.4rem; }
+      .doc-head .brand { font-family:-apple-system,Segoe UI,sans-serif; font-size:15pt;
+        font-weight:800; letter-spacing:.02em; }
+      .doc-head .sub { font-family:-apple-system,Segoe UI,sans-serif; font-size:9pt;
+        color:#555; margin-top:.25rem; display:flex; gap:1.2rem; flex-wrap:wrap; }
+      .doc-head .sub b { color:#111; }
+      h1 { font-size:16pt; margin:.4rem 0 .7rem; }
+      h2 { font-size:13pt; margin:1.2rem 0 .5rem; border-bottom:1px solid #ddd; padding-bottom:.15rem; }
+      h3 { font-size:11.5pt; margin:.9rem 0 .35rem; }
+      p, li { color:#222; }
+      ul { margin:.4rem 0 .4rem 1.2rem; }
+      strong { color:#000; }
+      code { font-family:'SF Mono',Consolas,monospace; font-size:.85em;
+        background:#f2f2f2; border:1px solid #e2e2e2; border-radius:3px; padding:.02rem .3rem; }
+      blockquote { border-left:3px solid #bbb; margin:.7rem 0; padding:.4rem .9rem;
+        color:#444; background:#fafafa; }
+      table { width:100%; border-collapse:collapse; margin:.8rem 0; font-size:9.5pt;
+        font-family:-apple-system,Segoe UI,sans-serif; }
+      th, td { border:1px solid #ccc; padding:.4rem .55rem; text-align:left; vertical-align:top; }
+      th { background:#f0f0f0; font-size:8.5pt; text-transform:uppercase; letter-spacing:.03em; }
+      hr { border:none; border-top:1px solid #ddd; margin:1.1rem 0; }
+      .doc-foot { margin-top:2rem; padding-top:.6rem; border-top:1px solid #ddd;
+        font-family:-apple-system,Segoe UI,sans-serif; font-size:8pt; color:#888; }
+      @media print { .doc-foot { position:fixed; bottom:0; } }
+    `;
+    const html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">' +
+      '<title>Legak — Rapport d\'audit social M&A</title><style>' + css + '</style></head>' +
+      '<body><div class="doc-head"><div class="brand">Legak</div>' +
+      '<div class="sub"><span>Rapport d\'audit social M&amp;A · phase 2 (Antigravity)</span>' +
+      '<span>Deal Risk Score : <b>' + score + '</b></span>' +
+      '<span>Généré le ' + now + '</span><span>Données fictives</span></div></div>' +
+      body +
+      '<div class="doc-foot">Legak — le modèle lit et rédige ; le code déterministe vérifie et conclut ; ' +
+      'l\'expert arbitre et signe. Document généré automatiquement, à valider par un expert.</div>' +
+      '<scr' + 'ipt>window.onload=function(){setTimeout(function(){window.print();},150);};</scr' + 'ipt>' +
+      '</body></html>';
+    const win = window.open('', '_blank');
+    if (!win) { alert('Autorisez les pop-ups pour ouvrir le PDF.'); return; }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   function listen() {
@@ -230,6 +293,7 @@
     lastLog = 0;
     document.getElementById('logFeed').innerHTML = '';
     document.getElementById('report').innerHTML = '<div class="empty">Calcul en cours...</div>';
+    document.getElementById('pdfBtn').disabled = true;
     document.getElementById('startBtn').disabled = true;
     document.getElementById('stopBtn').disabled = false;
     const r = await fetch('/api/antigravity/run', { method: 'POST' }).catch(() => null);
@@ -243,6 +307,7 @@
     if (!task) return;
     lastLog = 0;
     document.getElementById('logFeed').innerHTML = '';
+    document.getElementById('pdfBtn').disabled = true;
     document.getElementById('startBtn').disabled = true;
     document.getElementById('stopBtn').disabled = false;
     const r = await fetch('/api/antigravity/continue', {

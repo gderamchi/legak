@@ -3,5 +3,7 @@
   "environment": "remote",
   "max_turns": 30,
   "demo": false,
-  "chain_antigravity": true
+  "chain_antigravity": true,
+  "verify_web": false,
+  "poll_seconds": 2.0
 }

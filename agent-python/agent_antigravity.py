@@ -125,11 +125,23 @@ def build_relais(base_url: str) -> dict:
 # verifiees (function calling). C'est la materialisation du principe
 # "le code calcule, le modele redige".
 
-def _tool_definitions() -> list[dict]:
-    return [
+def _tool_definitions(verify_web: bool = False) -> list[dict]:
+    """Outils exposes a l'agent.
+
+    `verify_web=True` ajoute google_search + url_context (confirmation live des
+    parametres sur BOSS/Legifrance). Ces outils sont les plus lents/couteux :
+    on les reserve au mode "rigueur" ou a la continuation (`continue_phase2`),
+    pas au run demo rapide.
+    """
+    tools: list[dict] = [
         {"type": "code_execution"},   # pour la contradiction croisee (re-calcul Python)
-        {"type": "google_search"},    # confirmer les parametres "a verifier" (BOSS/Legifrance)
-        {"type": "url_context"},
+    ]
+    if verify_web:
+        tools += [
+            {"type": "google_search"},    # confirmer les parametres "a verifier" (BOSS/Legifrance)
+            {"type": "url_context"},
+        ]
+    tools += [
         {
             "type": "function",
             "name": "get_risk_register",
@@ -160,6 +172,7 @@ def _tool_definitions() -> list[dict]:
             },
         },
     ]
+    return tools
 
 
 def _dispatch_tool(name: str, args: dict, dossier: dict, register: dict) -> dict:
@@ -194,11 +207,37 @@ SYSTEM_INSTRUCTION = (
 )
 
 
-def _mission_input(relais: dict, register: dict) -> str:
-    """Compose l'entree texte : instruction + notes Computer Use + register."""
+def _mission_input(relais: dict, register: dict, verify_web: bool = False) -> str:
+    """Compose l'entree texte : instruction + notes Computer Use + register.
+
+    Le register et le dossier sont deja EMBARQUES ci-dessous : on ne demande donc
+    plus a l'agent d'appeler get_risk_register/get_dossier (round-trip inutile).
+    L'etape de confirmation web (BOSS/Legifrance) n'est incluse que si
+    `verify_web=True` — sinon on garde le run rapide et on la traite plus tard
+    via une continuation.
+    """
     notes = "\n".join(f"  - {n}" for n in relais["notes"])
     doc = relais["document_text"][:4000] if relais["document_text"] else "(aucun document extrait)"
     reg = json.dumps(register, ensure_ascii=False, indent=2)[:6000]
+
+    etapes = [
+        "1. Contradiction croisee : recalcule 1 a 2 expositions cle avec ton propre "
+        "Python (code_execution) et confirme qu'elles collent au register.",
+    ]
+    if verify_web:
+        etapes.append(
+            "2. Confirme les parametres au statut 'a_verifier' (SMIC, PMSS, 1,50% TA "
+            "cadres, majoration HS) via google_search/url_context sur BOSS et "
+            "Legifrance ; signale tout ecart."
+        )
+    etapes.append(
+        f"{len(etapes) + 1}. Redige, a partir des SEULS chiffres du register : "
+        "(a) un executive summary M&A (go/no-go, exposition, closing blocker), "
+        "(b) une recommandation SPA par risque (indemnity/escrow/CP/covenant/disclosure), "
+        "(c) une clause de garantie type pour le risque le plus grave. "
+        "Cite les passages sources. Reponds en francais."
+    )
+
     return (
         SYSTEM_INSTRUCTION + "\n\n"
         "PHASE 2 — analyse deterministe apres Computer Use.\n\n"
@@ -206,18 +245,10 @@ def _mission_input(relais: dict, register: dict) -> str:
         f"{notes}\n\n"
         "DOCUMENT extrait (contrat/attestation, texte brut) :\n"
         f"{doc}\n\n"
-        "RISK REGISTER deterministe (deja calcule, source de verite) :\n"
+        "RISK REGISTER deterministe (deja calcule, source de verite ci-dessous — "
+        "ne rappelle pas get_risk_register, tout est ici) :\n"
         f"{reg}\n\n"
-        "A FAIRE :\n"
-        "1. Appelle get_risk_register et get_dossier pour recuperer les donnees verifiees.\n"
-        "2. Contradiction croisee : recalcule 1 a 2 expositions cle avec ton propre Python "
-        "(code_execution) et confirme qu'elles collent au register.\n"
-        "3. Confirme les parametres au statut 'a_verifier' (SMIC, PMSS, 1,50% TA cadres, "
-        "majoration HS) via google_search/url_context sur BOSS et Legifrance ; signale tout ecart.\n"
-        "4. Redige, a partir des SEULS chiffres du register : (a) un executive summary M&A "
-        "(go/no-go, exposition, closing blocker), (b) une recommandation SPA par risque "
-        "(indemnity/escrow/CP/covenant/disclosure), (c) une clause de garantie type pour le "
-        "risque le plus grave. Cite les passages sources. Reponds en francais."
+        "A FAIRE :\n" + "\n".join(etapes)
     )
 
 
@@ -242,14 +273,19 @@ def _run_agent_loop(client, state: dict, dossier: dict, register: dict,
                     previous_interaction_id: Optional[str] = None,
                     environment: str = "remote",
                     max_turns: int = 30,
-                    poll_seconds: float = 4.0) -> dict:
+                    poll_seconds: float = 2.0,
+                    verify_web: bool = False) -> dict:
     """Lance l'agent en background et pilote la boucle plan/act/observe.
 
     Gere : polling d'un run background, execution des function_call custom
     (les outils filesystem sont executes automatiquement par l'environnement),
     persistance de environment_id + interaction_id (etat durable natif).
+
+    `poll_seconds` cadence le polling : plus bas = latence percue plus faible
+    (on reagit plus vite a `requires_action`). `verify_web` decide si les outils
+    web lents (google_search/url_context) sont exposes.
     """
-    tools = _tool_definitions()
+    tools = _tool_definitions(verify_web)
     custom_names = {t["name"] for t in tools if t.get("type") == "function"}
 
     # NB : les consignes systeme sont integrees a l'entree texte (via
@@ -330,6 +366,8 @@ def _demo_report(register: dict, dossier: dict) -> str:
 def run_phase2(config: dict) -> dict:
     """Point d'entree : execute la phase Antigravity apres Computer Use."""
     base_url = config.get("base_url", "http://localhost:5001")
+    verify_web = bool(config.get("verify_web", False))
+    poll_seconds = float(config.get("poll_seconds", 2.0))
 
     state = {
         "status": "running", "phase": "antigravity",
@@ -362,9 +400,11 @@ def run_phase2(config: dict) -> dict:
             client = genai.Client(api_key=api_key)
             _log(state, "Connexion a l'agent Antigravity...", "info")
             result = _run_agent_loop(client, state, dossier, register,
-                                     first_input=_mission_input(relais, register),
+                                     first_input=_mission_input(relais, register, verify_web),
                                      environment=config.get("environment", "remote"),
-                                     max_turns=config.get("max_turns", 30))
+                                     max_turns=config.get("max_turns", 30),
+                                     poll_seconds=poll_seconds,
+                                     verify_web=verify_web)
             report = result["output_text"]
             state["interaction_id"] = result["interaction_id"]
             state["environment_id"] = result["environment_id"]
@@ -413,11 +453,16 @@ def continue_phase2(config: dict, task: str) -> dict:
 
     from google import genai
     client = genai.Client(api_key=api_key)
+    # Continuation = on rouvre la memoire durable et on autorise la verification
+    # web (BOSS/Legifrance) : c'est ici qu'on "revient plus tard" sur l'etape 3
+    # laissee de cote pendant le run demo rapide.
     result = _run_agent_loop(client, state, dossier, register,
                              first_input=task,
                              previous_interaction_id=prev_iid,
                              environment=env_id,
-                             max_turns=config.get("max_turns", 30))
+                             max_turns=config.get("max_turns", 30),
+                             poll_seconds=float(config.get("poll_seconds", 2.0)),
+                             verify_web=True)
     state.update({"status": "done", "report": result["output_text"],
                   "interaction_id": result["interaction_id"],
                   "environment_id": result["environment_id"],
