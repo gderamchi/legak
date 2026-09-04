@@ -118,13 +118,38 @@ côté API ; `VITE_API_BASE` côté front si l'API n'est pas sur
 
 ## Jeu de démonstration
 
+### Parcours démo pas à pas (tout est prérempli, on ne fait que cliquer)
+
+1. **Cadrage** — ouvrir `/app`, cliquer « Pré-remplir avec la cible de
+   démonstration » (Novatech Services SAS, SIREN, SIRET, Syntec, effectif,
+   période 2024-01 → 2026-06 : le cadrage exact de la data room de démo, servi
+   par `GET /api/demo-cadrage`), puis « Ouvrir la mission ».
+2. **Collecte** — deux boutons au choix :
+   - « Envoyer l'agent collecter la salle de données » : Gemini Computer Use
+     opère le portail VDR (`/vdr`, code `ATLAS-2026`) au navigateur, écran
+     retransmis en direct (nécessite Chrome ; sans clé Gemini, parcours
+     scripté tracé `decidedBy: "code"`) ;
+   - ou « Charger le jeu de démo (hors ligne) » : les 23 pièces arrivent en
+     boîte de réception sans navigateur.
+     Puis « Trier et qualifier les pièces » — le tri s'affiche en direct.
+3. **Analyse** — « Lancer l'audit » : extraction, 8 contrôles datés,
+   contradiction croisée, rapport (~10 s hors ligne, ~90 s avec Gemini).
+4. **Rapport** — registre des risques, fiches chiffrées, export Markdown, et
+   « Déposer la request list au Q&A du VDR » pour la dernière étape computer
+   use.
+
+Chaque étape terminée affiche une bannière avec le bouton vers l'étape
+suivante ; aucune saisie clavier n'est nécessaire sur tout le parcours.
+
+### Les fichiers de la data room
+
 Les 23 pièces de la data room fictive sont exportées en vrais fichiers dans
 `demo-data-room/` (régénérables via `node scripts/export-demo-data-room.mjs`).
-Pour tester le parcours principal : ouvrir `/app`, cadrer la mission,
-sélectionner tous les fichiers de `demo-data-room/` et les glisser d'un coup
-dans la zone de dépôt, puis « Trier et qualifier les pièces (agent) » — le tri
-s'affiche en direct (boîte de réception → dossiers thématiques, force probante
-qualifiée pièce par pièce, fichiers réellement déplacés sur le disque).
+Pour tester le dépôt manuel : sélectionner tous les fichiers de
+`demo-data-room/` et les glisser d'un coup dans la zone de dépôt, puis
+« Trier et qualifier les pièces » — le tri s'affiche en direct (boîte de
+réception → dossiers thématiques, force probante qualifiée pièce par pièce,
+fichiers réellement déplacés sur le disque).
 
 `demo-data-room-variant/` contient les **mêmes données dans des formats
 entièrement différents** (fichiers renommés, colonnes renommées et réordonnées,
@@ -146,6 +171,8 @@ curl -s -X POST http://localhost:8787/api/run-diligence -H 'content-type: applic
 Endpoints :
 
 - `GET /api/health` — état et mode (gemini/demo).
+- `GET /api/demo-cadrage` — cadrage de la cible fictive (préremplissage
+  explicite du formulaire pour le parcours démo).
 - `GET /api/missions` — liste des missions ; `GET /api/missions/:id` — état complet.
 - `POST /api/missions` — cadrage (cible et période obligatoires, aucun défaut).
 - `POST /api/missions/:id/documents` — réception de pièces (dédupliquées par

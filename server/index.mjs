@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { demoTarget, demoDataRoom } from './anv/demo-data.mjs'
 import { classifyDocuments, extractStructuredData } from './anv/extract.mjs'
+import { hasGeminiKey } from './anv/gemini.mjs'
 import { runAudit } from './anv/engine.mjs'
 import { contradictionAgent, draftingAgent } from './anv/agents.mjs'
 import { openDossier, recordMilestone, recallDossier } from './anv/dossier.mjs'
@@ -307,6 +308,13 @@ async function executeIntake(mission, { paceMs = 0 } = {}) {
 
 async function runAnalysis(mission, liveJob = null) {
   const emit = (event) => appendProof(mission, event, liveJob)
+  // Cadence de lecture : sans clé Gemini, les étapes hors ligne sont quasi
+  // instantanées — on laisse chaque phase à l'écran ~1,5 s pendant un run
+  // interactif (liveJob) pour que le fil de décisions reste suivable à l'œil.
+  // Avec Gemini, la latence du modèle rythme déjà l'audit : aucune pause.
+  const pace = (ms) => (liveJob && !hasGeminiKey()
+    ? new Promise((resolve) => setTimeout(resolve, ms))
+    : Promise.resolve())
 
   emit({
     phase: 'extraction',
@@ -316,6 +324,7 @@ async function runAnalysis(mission, liveJob = null) {
     status: 'active',
   })
   saveMissions()
+  await pace(1600)
 
   const structured = await extractStructuredData(mission)
   if (structured.error) {
@@ -341,6 +350,7 @@ async function runAnalysis(mission, liveJob = null) {
     meta: { mode: structured.mode },
   })
   saveMissions()
+  await pace(1200)
 
   structured.missingEvidence = []
   const auditResult = runAudit({
@@ -362,6 +372,7 @@ async function runAnalysis(mission, liveJob = null) {
     note: `Contrôles exécutés règle par règle par le moteur déterministe (barèmes versionnés, prescription appliquée à partir de ${auditResult.totals.prescriptionStart}${auditResult.duplicatePayrollRows ? `, ${auditResult.duplicatePayrollRows} ligne(s) de paie dupliquée(s) sommée(s)` : ''}).`,
   })
   saveMissions()
+  await pace(2200)
 
   emit({
     phase: 'contradiction',
@@ -371,6 +382,7 @@ async function runAnalysis(mission, liveJob = null) {
     status: 'active',
   })
   saveMissions()
+  await pace(1600)
 
   const [contradiction, execSummary] = await Promise.all([
     contradictionAgent(mission, auditResult),
@@ -396,6 +408,7 @@ async function runAnalysis(mission, liveJob = null) {
     note: 'Contrôle croisé des conclusions (anti-ancrage) — les chiffres restent la propriété du moteur.',
   })
   saveMissions()
+  await pace(1800)
 
   emit({
     phase: 'rapport',
@@ -404,6 +417,7 @@ async function runAnalysis(mission, liveJob = null) {
     rationale: 'Executive summary, risk register, clauses SPA et plan post-closing.',
     status: 'active',
   })
+  await pace(1400)
 
   const report = buildReport({ mission, auditResult, contradiction, execSummary, intake: mission.intake ?? { qualified: [] } })
   const markdown = reportToMarkdown(report, auditResult.vehicleAnalyses)
@@ -546,6 +560,14 @@ createServer(async (req, res) => {
         model,
         thematique: 'Avantages en nature véhicules',
       })
+    }
+
+    // Cadrage de la cible fictive (parcours démo) : le front recopie ces
+    // valeurs dans le formulaire — le préremplissage reste un geste explicite
+    // de l'utilisateur, jamais un défaut silencieux du serveur.
+    if (req.method === 'GET' && url.pathname === '/api/demo-cadrage') {
+      const { period: _period, ...cadrage } = demoTarget
+      return send(res, 200, cadrage)
     }
 
     if (req.method === 'POST' && url.pathname === '/api/missions') {
